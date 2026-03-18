@@ -10,7 +10,7 @@ from torchmetrics import Metric
 
 from DNAnet.data.data_models.hid_image import HIDImage
 from DNAnet.data.preprocessing.preprocess_item import RFU_MAX_VALUE, inverse_scale_data, preprocess_profile_torch
-from DNAnet.models.HIDImageBaseModel import HIDImageBaseModel
+from DNAnet.models.base_model import BaseModel
 from DNAnet.models.prediction import Prediction
 from DNAnet.models.reconstruction.autoencoder_architectures import Conv1dAutoencoder, PerDyeConv1dAutoencoder, \
     SharedWeightPerDyeConv1dAutoencoder
@@ -19,7 +19,7 @@ from DNAnet.models.reconstruction.autoencoder_baselines import FourierAutoEncode
 LOGGER = logging.getLogger('dnanet')
 
 
-class HIDAutoencoder(HIDImageBaseModel):
+class Autoencoder(BaseModel):
 
 
     def __init__(self,
@@ -45,7 +45,7 @@ class HIDAutoencoder(HIDImageBaseModel):
         self.preprocessing_num_dyes_included = input_dyes
         self.preprocessing_smooth_keep_factor = preprocessing_smooth_keep_factor
         self.architecture = architecture
-        # depth = np.sqrt(compression).astype(int)
+
 
 
         if architecture == "cnn":
@@ -83,7 +83,7 @@ class HIDAutoencoder(HIDImageBaseModel):
         else:
             raise ValueError(f"Unknown architecture: {architecture}")
 
-        super().__init__(model, loss, device)
+        super().__init__(model, loss, device, apply_allele_caller=False)
 
         self.encoded_shape = self._model.encoded_shape()
 
@@ -123,7 +123,6 @@ class HIDAutoencoder(HIDImageBaseModel):
         inputs = self.get_inputs(batch)           # preprocessed
         y_true = self.get_targets(batch)
 
-        # print(f"Step: inputs shape: {inputs.shape}, y_true shape: {y_true.shape}")
 
         # 2. Forward pass in preprocessed space
         pred_pre = self._model(inputs)
@@ -143,7 +142,6 @@ class HIDAutoencoder(HIDImageBaseModel):
                 # For regression metrics we pass flattened vectors
                 metric.update(pred_orig.view(-1), y_true.view(-1))
 
-        # print(f"Step: pred_orig shape: {pred_orig.shape}, y_true shape: {y_true.shape}")
 
         # 6. Compute loss in original space
         loss = self.loss_fn(pred_orig, y_true)
