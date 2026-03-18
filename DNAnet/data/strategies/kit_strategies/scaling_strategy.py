@@ -15,7 +15,7 @@ from typing import Optional, Union, Tuple, Callable, Dict, Set, List
 import numpy as np
 import scipy
 
-from DNAnet.data.data_models import Panel
+from DNAnet.data.data_models.dna_models import Panel
 from DNAnet.data.strategies.kit_strategies.internal_size_standard import GENESCAN_600_LIZ_BPS, WEN_ILS_BPS
 from DNAnet.data.strategies.kit_strategies.str_kit import STRKit
 from DNAnet.data.utils import (

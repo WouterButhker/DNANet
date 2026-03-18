@@ -9,13 +9,11 @@ from pathlib import Path
 from typing import Dict, Generator, List, Optional, Set, Tuple, Union
 import numpy as np
 
-import numpy as np
-from DNAnet.data.utils import DNA_CHANNELS
 from tqdm import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
 
 from DNAnet.data.caching import _load_cached_hf_data, write_to_hf_cache
-from DNAnet.data.data_models import Panel
+from DNAnet.data.data_models.dna_models import Panel
 from DNAnet.data.data_models.base import InMemoryDataset, SimpleDataset
 from DNAnet.data.data_models.hid_image import HIDImage, Ladder
 from DNAnet.data.data_models.structs import AlleleAnnotation, ScanpointAnnotation
@@ -29,7 +27,6 @@ from DNAnet.utils import (
     get_noc_from_rd_file_name,
     get_prefix_from_filename,
     is_no_control, is_rd_hid_filename,
-    load_donor_alleles,
 )
 
 LOGGER = logging.getLogger('dnanet')
@@ -386,6 +383,7 @@ class HIDDataset(InMemoryDataset):
     @staticmethod
     def parse_full_annotations(annotation_folder_path):
         sample_arrays = defaultdict(partial(np.zeros, (5, 4096)))
+        dna_channels = StrategyRegistry.get_scaling_strategy().dye_channel_colors()
         blacklist = set()
         csv_files = Path(annotation_folder_path).rglob('*.csv')
         for csv_file in csv_files:
@@ -398,7 +396,7 @@ class HIDDataset(InMemoryDataset):
                             header = line
                         else:
                             sample_name, dye, x0, x1, category = line[2], line[3], line[4], line[5], line[7]
-                            dye_idx = DNA_CHANNELS.index(dye)
+                            dye_idx = dna_channels.index(dye)
                             if dye_idx == 5:
                                 blacklist.add(sample_name)
                             else:

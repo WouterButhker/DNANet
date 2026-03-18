@@ -5,7 +5,7 @@ from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
 
 import numpy as np
 
-from DNAnet.data.data_models import Annotation
+from DNAnet.data.data_models.dna_models import Annotation
 from DNAnet.data.split import split_data_in_k_folds
 from DNAnet.models.prediction import Prediction
 
@@ -133,4 +133,3 @@ class Metric:
 
     def __call__(self, images: Sequence[Image], predictions: Sequence[Prediction], **kwargs) -> float:
         return self.func(images, predictions, **kwargs)
-

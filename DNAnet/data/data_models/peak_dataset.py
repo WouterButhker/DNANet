@@ -7,7 +7,7 @@ from typing import Optional, List, Iterator, Sequence, Dict, Any, Tuple
 import numpy as np
 from tqdm import tqdm
 
-from DNAnet.data.data_models import Marker, Annotation
+from DNAnet.data.data_models.dna_models import Annotation, Marker
 from DNAnet.data.data_models.extracted_peak import ExtractedPeak, SCAN_TO_BASE
 from DNAnet.data.data_models.hid_dataset import HIDDataset
 from DNAnet.data.preprocessing.peak_extraction import extract_peak_windows

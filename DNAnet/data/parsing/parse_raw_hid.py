@@ -7,8 +7,8 @@ from typing import List, Mapping, Optional, Sequence, Union
 import construct
 import numpy as np
 
-from DNAnet.data.kit_compatibility.kit import Kit
 from DNAnet.data.preprocessing.baseline_and_smooth import baseline_superior
+from DNAnet.data.strategies.kit_strategies.str_kit import STRKit
 from DNAnet.typing import PathLike
 
 
@@ -258,7 +258,7 @@ def parse_hid(filename: PathLike) -> Optional[Mapping[str, Optional[ElementValue
     return hid_data
 
 
-def get_peak_data(hid_file: PathLike, strategy: str, kit: Kit) -> Optional[np.ndarray]:
+def get_peak_data(hid_file: PathLike, strategy: str, kit: STRKit) -> Optional[np.ndarray]:
     """
     Retrieve peak data from HID file. The data per dye
     can be stored in different columns (e.g. the first dye can be stored

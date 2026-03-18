@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Optional, Sequence
 
 from DNAnet.data.data_models.dna_models import Panel
-from DNAnet.data.strategies.kit_strategies.internal_size_standard import InternalSizeStandard
+from DNAnet.data.strategies.kit_strategies.internal_size_standard import SizeStandard, WEN_ILS_BPS
 
 
 @dataclass(frozen=True)
@@ -28,7 +28,7 @@ class STRKit:
     """
 
     name: str
-    size_standard: InternalSizeStandard
+    size_standard: SizeStandard
     num_dyes: int = 6
     panel_path: Optional[Path] = None
     panel: Optional[Panel] = None
@@ -39,7 +39,7 @@ class STRKit:
 
 POWERPLEX_Y23 = STRKit(
     name="POWERPLEX_Y23",
-    size_standard=InternalSizeStandard.WEN_ILS,
+    size_standard=WEN_ILS_BPS,
     panel_path=None,
     panel=None,
     markers=None,

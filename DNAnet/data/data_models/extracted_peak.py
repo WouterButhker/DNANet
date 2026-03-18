@@ -3,7 +3,7 @@ from typing import Optional, Sequence, MutableSequence, MutableMapping, Any
 import numpy as np
 import scipy
 
-from DNAnet.data.data_models import Marker, Allele, Annotation
+from DNAnet.data.data_models.dna_models import Allele, Annotation, Marker
 from DNAnet.data.data_models.base import Image
 from DNAnet.data.data_models.hid_image import HIDImage
 from DNAnet.data.preprocessing.peak_utils import build_peak_data, find_bin, markers_contain_allele, slice_with_padding

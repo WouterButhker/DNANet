@@ -9,7 +9,7 @@ from typing import Any, Dict, List, MutableMapping, Optional, Sequence, Tuple
 import numpy as np
 from scipy.signal import find_peaks
 
-from DNAnet.data.data_models import Allele, Annotation, Marker, Panel
+from DNAnet.data.data_models.dna_models import Allele, Annotation, Marker, Panel
 from DNAnet.data.data_models.base import Image
 from DNAnet.data.parsing import get_peak_data, parse_called_alleles
 from DNAnet.data.strategies.strategy_registry import StrategyRegistry
