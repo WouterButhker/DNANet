@@ -3,10 +3,7 @@ from typing import Sequence, Optional
 import numpy as np
 import torch
 
-from DNAnet.data.data_models import Marker, Allele
-
-
-
+from DNAnet.data.data_models.dna_models import Marker, Allele
 
 
 def build_peak_data(img_data: np.ndarray, dye_index: int, start: int, length: int, include_max_pool_dyes: bool, pad_value: int = 0) -> np.ndarray:

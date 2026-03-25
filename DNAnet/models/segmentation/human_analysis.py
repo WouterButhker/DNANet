@@ -1,8 +1,8 @@
 import logging
 
 from DNAnet.data.data_models.hid_image import HIDImage
+from DNAnet.data.data_models.structs import AllelePrediction
 from DNAnet.models.base_model import Model
-from DNAnet.models.prediction import Prediction
 from DNAnet.typing import PathLike
 
 
@@ -10,6 +10,7 @@ LOGGER = logging.getLogger('dnanet')
 
 NON_AUTOSOMAL_MARKERS = ['AMEL', 'DYS391', 'DYS576', 'DYS570']
 
+#Fixme
 class HumanAnalysis(Model):
     def __init__(self):
         """
@@ -18,7 +19,7 @@ class HumanAnalysis(Model):
         of the HIDImage).
         """
 
-    def predict(self, image: HIDImage) -> Prediction:
+    def predict(self, image: HIDImage) -> AllelePrediction:
         if 'called_alleles_manual' not in image.meta:
             raise ValueError("No `called_alleles_manual` found when running HumanAnalysis model, "
                              "set `ground_truth_as_annotations=True` in the data config file to "
@@ -26,7 +27,7 @@ class HumanAnalysis(Model):
         # remove DYS and AMEL as these are not in the ground truth annotations
         called_alleles = [m for m in image.meta['called_alleles_manual']
                           if m.name not in NON_AUTOSOMAL_MARKERS]
-        return Prediction(image=None, called_alleles=called_alleles, original_image_path=image.path)
+        return AllelePrediction(data=called_alleles)
 
     def load(self, model_dir: PathLike):
         pass

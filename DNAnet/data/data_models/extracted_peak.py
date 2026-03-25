@@ -1,11 +1,12 @@
-from typing import Optional, Sequence, MutableSequence, MutableMapping, Any
+from typing import Optional, MutableSequence, MutableMapping, Any
 
 import numpy as np
 import scipy
 
-from DNAnet.data.data_models.dna_models import Allele, Annotation, Marker
 from DNAnet.data.data_models.base import Image
+from DNAnet.data.data_models.dna_models import Allele, Marker, Panel
 from DNAnet.data.data_models.hid_image import HIDImage
+from DNAnet.data.data_models.structs import Annotation, ScanpointAnnotation, ClassAnnotation, AlleleAnnotation
 from DNAnet.data.preprocessing.peak_utils import build_peak_data, find_bin, markers_contain_allele, slice_with_padding
 from DNAnet.evaluation.visualizations import _get_marker_bin
 
@@ -23,13 +24,13 @@ class ExtractedPeak(Image):
     """
     def __init__(self,
                  image: HIDImage,
+                 annotation: Optional[Annotation],
+                 adjusted_panel: Optional[Panel],
                  dye_index: int,
                  peak_center: int,
                  window_size: int,
                  peak_height: int,
                  annotation_padding: int = 1,
-                 include_raw_annotation: bool = False,
-                 use_ground_truth: bool = True,
                  include_max_pool_dyes: bool = False):
         self.window_start = peak_center - window_size // 2
         self.peak_height = peak_height
@@ -38,10 +39,10 @@ class ExtractedPeak(Image):
         self.dye_index = dye_index
         self.include_max_pool_dyes = include_max_pool_dyes
         self.peak_basepair = SCAN_TO_BASE(peak_center)
-        self.markers = image._panel._panel
+        self.adjusted_panel = adjusted_panel
         self.marker: Optional[Marker] = self._find_marker()
         self._data = build_peak_data(image.data, dye_index, self.window_start, window_size, include_max_pool_dyes)
-        self._annotation = self._create_annotation(image, padding=annotation_padding, include_raw=include_raw_annotation, use_ground_truth=use_ground_truth)
+        self._annotation = self._create_annotation(annotation, padding=annotation_padding) if annotation else None
         self.is_normalized = False
 
 
@@ -64,7 +65,9 @@ class ExtractedPeak(Image):
         return self.marker
 
     def _find_marker(self) -> Optional[Marker]:
-        for marker in self.markers:
+        if self.adjusted_panel is None:
+            return None
+        for marker in self.adjusted_panel.panel_contents():
             lbin, rbin = _get_marker_bin(marker).squeeze()
             if marker.dye_row == self.dye_index and lbin <= self.peak_basepair <= rbin:
                 return marker
@@ -88,7 +91,7 @@ class ExtractedPeak(Image):
         return self._data
 
 
-    def _create_annotation(self, img: HIDImage, padding: int, include_raw: bool = True, use_ground_truth: bool = True) -> Annotation:
+    def _create_annotation(self, annotation: Annotation, padding: int) -> ClassAnnotation:
         """
         Adds a label based on the annotation image.
         If the peak center (with optional padding) is annotated as an allele, the label is "allele".
@@ -96,45 +99,45 @@ class ExtractedPeak(Image):
         Args:
             padding: padding around the peak center to consider for annotation.
         """
-        full_annotation = img.annotation.image
+
 
         # If ground truth alleles are available, use them for labeling
-        if img.meta['called_alleles'] is not None and use_ground_truth:
-            ground_truth_alleles: Sequence[Marker] = img.meta['called_alleles']
-            if markers_contain_allele(ground_truth_alleles, self.get_allele(), self.get_marker()):
+        if isinstance(annotation, AlleleAnnotation):
+            if markers_contain_allele(annotation.data, self.get_allele(), self.get_marker()):
                 label = "allele"
             else:
                 label = "noise"
-            if include_raw:
-                cropped_annotation = slice_with_padding(full_annotation, self.dye_index, self.window_start, self.window_size)
-                return Annotation(labels=label, image=cropped_annotation)
-            return Annotation(labels=label)
 
-        cropped_annotation = slice_with_padding(full_annotation, self.dye_index, self.window_start, self.window_size)
+            return ClassAnnotation(data=label)
 
-        start = self.window_size // 2 - padding
-        end = self.window_size // 2 + padding + 1
-        if cropped_annotation[start:end].sum() > 0:
-            label = "allele"
-        else:
-            label = "noise"
+        elif isinstance(annotation, ScanpointAnnotation):
+            cropped_annotation = slice_with_padding(annotation.data, self.dye_index, self.window_start, self.window_size)
 
-        if include_raw:
-            return Annotation(labels=label, image=cropped_annotation)
-        return Annotation(labels=label)
+            start = self.window_size // 2 - padding
+            end = self.window_size // 2 + padding + 1
+            if cropped_annotation[start:end].sum() > 0:
+                label = "allele"
+            else:
+                label = "noise"
+
+            return ClassAnnotation(data=label)
+
+        raise ValueError(f"Unsupported annotation type: {type(annotation)}")
 
 
     @property
-    def annotation(self) -> Annotation:
+    def annotation(self) -> Optional[ClassAnnotation]:
         return self._annotation
 
     @property
-    def annotations(self) -> MutableSequence[Annotation]:
+    def annotations(self) -> MutableSequence[Optional[ClassAnnotation]]:
         return [self._annotation]
 
     @property
-    def is_allele(self) -> bool:
-        return self._annotation.label == "allele"
+    def is_allele(self) -> Optional[bool]:
+        if self.annotation is None:
+            return None
+        return self.annotation.data == "allele"
 
     @property
     def meta(self) -> MutableMapping[str, Any]:

@@ -1,11 +1,13 @@
-from typing import Sequence, Dict
+from typing import Sequence, Optional
 
 import numpy as np
 import scipy
 import torch
 
+from DNAnet.data.data_models.dna_models import Marker, Panel
 from DNAnet.data.data_models.extracted_peak import ExtractedPeak
 from DNAnet.data.data_models.hid_image import HIDImage
+from DNAnet.data.data_models.structs import Annotation
 from DNAnet.data.strategies.strategy_registry import StrategyRegistry
 
 
@@ -170,7 +172,7 @@ def find_peaks_torch_indices(
 
 
 def extract_peaks_torch(img: HIDImage,
-                        device,
+                        adjusted_panel: Panel,
                         threshold: float,
                         window_size: int,
                         include_max_pool_dyes: bool = False,
@@ -179,7 +181,7 @@ def extract_peaks_torch(img: HIDImage,
     Extract peak windows from HIDImage using PyTorch.
     """
     data = img.data[:5] if img.include_size_standard else img.data
-    image = torch.from_numpy(data).to(device=device, dtype=torch.float32) # (6, 4096, 1)
+    image = torch.from_numpy(data).to(dtype=torch.float32) # (6, 4096, 1)
     image = image.squeeze() # (6, 4096)
     marker_to_idx = StrategyRegistry.get_scaling_strategy().marker_name_to_dye_idx()
     # print(f"Image shape: {image.shape}, dtype: {image.dtype}, device: {image.device}")
@@ -193,8 +195,8 @@ def extract_peaks_torch(img: HIDImage,
     #
     # print(img._panel._panel)
 
-    marker_idx = [marker_to_idx.get(img._panel.get_marker_name_by_dye_and_bp(dye, bp), len(marker_to_idx)) for dye, bp in peak_centers.tolist()]
-    marker_idx = torch.tensor(marker_idx, device=device, dtype=torch.long) # (num_peaks,)
+    marker_idx = [marker_to_idx.get(adjusted_panel.get_marker_name_by_dye_and_bp(dye, bp), len(marker_to_idx)) for dye, bp in peak_centers.tolist()]
+    marker_idx = torch.tensor(marker_idx, dtype=torch.long) # (num_peaks,)
 
     # Should return peak_tensors, marker_idx, peak_centers
     return peak_tensors, marker_idx, peak_centers
@@ -202,31 +204,23 @@ def extract_peaks_torch(img: HIDImage,
 
 
 def extract_peak_windows(img: HIDImage,
+                         annotation: Optional[Annotation],
+                         adjusted_panel: Optional[Panel],
                          threshold: float,
                          window_size: int,
-                         use_ground_truth_labels: bool = True,
-                         include_raw_annotation: bool = False,
                          include_max_pool_dyes: bool = False) -> Sequence[ExtractedPeak]:
     """
     Extract windows centered on a single representative peak per contiguous run
     above 'threshold'. Flat-topped (plateau) peaks count as one peak.
 
-    Parameters
-    ----------
-    x : array_like, shape (N,)
-        1D input signal.
-    threshold : float
-        Points strictly greater than this value are considered "above threshold".
-    window_size : int
-        Length of each extracted window (must be positive).
-        The peak lands at index window_size//2.
-    pad_value : float, optional
-        Value used to pad windows near the edges (default 0.0).
+    :param img: HIDImage to extract peaks from.
+    :param annotation: Annotation object containing the peak locations.
+    :param adjusted_panel: Panel object containing the adjusted marker locations.
+    :param threshold: Minimum height of a peak to be considered.
+    :param window_size: Size of the extracted peak window.
+    :param include_max_pool_dyes: Whether to include the maximum value of the other dyes in the peak window.
 
-    Returns
-    -------
-    windows : ndarray, shape (num_peaks, window_size)
-        Each row is a window centered on one detected peak index.
+    :return: List of ExtractedPeak objects.
     """
     peaks = []
     data = img.data[:5] if img.include_size_standard else img.data # do not include peaks in size standard
@@ -246,12 +240,9 @@ def extract_peak_windows(img: HIDImage,
 
         for peak_idx in peak_idxs[0]:
             peak_height = x[peak_idx]
-            peak = ExtractedPeak(img, dye_index, peak_idx, window_size, peak_height,
-                                 include_raw_annotation=include_raw_annotation, use_ground_truth=use_ground_truth_labels,
-                                 include_max_pool_dyes=include_max_pool_dyes)
+            peak = ExtractedPeak(img, annotation, adjusted_panel, dye_index, peak_idx, window_size, peak_height,
+                                                                  include_max_pool_dyes=include_max_pool_dyes)
             peaks.append(peak)
 
-    # LOGGER.debug(f"Extracted {len(peaks)} peaks from image {img.path.name} with threshold {threshold}.")
 
     return peaks
-

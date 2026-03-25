@@ -4,7 +4,7 @@ import xml.etree.ElementTree as ET
 from collections import defaultdict
 from dataclasses import dataclass
 from functools import cached_property
-from typing import Any, Dict, Iterable, MutableMapping, Optional, Sequence, Set, Tuple, Union, List
+from typing import Any, Dict, Optional, Sequence, Tuple, List
 
 import numpy as np
 
@@ -157,6 +157,14 @@ class Panel:
             self._marker_name_lut_offset: Dict[int, int] = {}
             self._build_marker_name_lut()
 
+
+    def panel_contents(self) -> Sequence[Marker]:
+        """
+        Get the panel contents as a sequence of Markers.
+
+        :return: Sequence of Markers in the panel
+        """
+        return self._panel
 
     def get_allele_basepair_and_bins(self, marker_name: str, allele_name: str) \
             -> Tuple[float, float, float]:
@@ -354,60 +362,3 @@ class Panel:
 
             self._marker_name_lut[dye_row] = lut
             self._marker_name_lut_offset[dye_row] = offset
-
-
-
-class Annotation:
-    """
-    This class represents a way of handling image annotations.
-
-    :param labels: One or more labels that have been annotated for the image.
-    :param image: A matrix annotation representing an image. To be used in
-        segmentation tasks, where predictions are made at the pixel level.
-    :param meta: A mapping where additional metadata about this annotation
-        can be stored.
-    """
-    def __init__(self,
-                 labels: Union[str, Iterable[str]] = None,
-                 image: np.ndarray = None,
-                 meta: MutableMapping[str, Any] = None):
-        if labels is not None and not isinstance(labels, Set):
-            labels = {labels} if isinstance(labels, str) else set(labels)
-        self.labels: Set[str] = labels
-        self.image: np.ndarray = image
-        self.meta: MutableMapping[str, Any] = meta or dict()
-
-    @property
-    def label(self) -> str:
-        """
-        Returns the single label in this annotation as a `str`. Fails if no
-        labels or multiple labels were annotated.
-        """
-        if not self.labels:
-            raise TypeError("No labels in annotation")
-        if len(self.labels) > 1:
-            raise ValueError(f"Multiple ({len(self.labels)}) annotated labels")
-        return next(iter(self.labels))
-
-    def __eq__(self, other) -> bool:
-        return isinstance(other, self.__class__) \
-               and self.labels == other.labels \
-               and np.array_equal(self.image, other.image) \
-               and self.meta == other.meta
-
-    def __hash__(self) -> int:
-        labels = None if self.labels is None else frozenset(self.labels)
-        return hash((
-            labels,
-            self.image.tobytes() if self.image is not None else None,
-        ))
-
-    def __str__(self) -> str:
-        return f"Annotation(" \
-               f"labels={self.labels}, " \
-               f"image={self.image}, " \
-               f"meta={self.meta}" \
-               f")"
-
-    def __repr__(self) -> str:
-        return str(self)

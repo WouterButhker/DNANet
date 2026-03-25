@@ -8,6 +8,7 @@ from typing import Any, Dict, Iterable, Mapping, MutableMapping, Optional, Union
 
 import confidence
 from confidence import Configuration, dumpf
+from torch.utils.data import Dataset
 
 from DNAnet.data.data_models.base import InMemoryDataset
 from DNAnet.data.data_models.hid_dataset import HIDDataset
@@ -133,7 +134,7 @@ def load_training_config(source: PathLike) -> Dict[str, Any]:
     return parse_config(training_config)['training']
 
 
-def load_dataset(source: PathLike) -> InMemoryDataset:
+def load_dataset(source: PathLike) -> Dataset:
     """
     Load a dataset from a config file.
     """
@@ -261,7 +262,7 @@ def dump_config(
         model_config_path: str,
         training_config_path: Optional[str] = None,
         validation_config: Optional[Union[float, str]] = None,
-        dataset: Optional[InMemoryDataset] = None,
+        dataset: Optional[Dataset] = None,
         model: Optional[Model] = None,
 ):
     """

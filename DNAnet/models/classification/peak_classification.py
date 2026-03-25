@@ -1,4 +1,5 @@
-from typing import List, Optional, Tuple, Sequence
+from dataclasses import dataclass
+from typing import List, Optional, Any
 
 import torch
 import torchmetrics
@@ -6,15 +7,69 @@ import torchvision
 from torch import nn
 from torchmetrics import Metric
 
+from DNAnet.data.data_models.dna_models import Panel
 from DNAnet.data.data_models.extracted_peak import ExtractedPeak
-from DNAnet.data.data_models.hid_image import HIDImage
+from DNAnet.data.data_models.structs import PeakPrediction, ClassAnnotation
 from DNAnet.data.strategies.strategy_registry import StrategyRegistry
-from DNAnet.models.base_model import BaseModel
+from DNAnet.models.base_model import BaseModel, TransformData
 from DNAnet.models.classification.peak_classification_torch import PeakClassificationModel
-from DNAnet.models.prediction import Prediction
 
+
+@dataclass
+class PeakClassifierTransformData(TransformData):
+    include_marker: bool = True
+    label_to_idx: dict = None
+
+    def __call__(self, data: dict) -> dict[str, Any]:
+        peak: ExtractedPeak = data['peak']
+        annotation: Optional[ClassAnnotation] = data['annotation']
+        adjusted_panel: Optional[Panel] = data['adjusted_panel']
+
+        input_data = torch.tensor(peak.data, dtype=torch.float32)
+        annotation_idx = self.label_to_idx[annotation.data] if annotation else -1
+        target = torch.tensor(annotation_idx, dtype=torch.long) if annotation else None
+
+        if input_data.dim() == 1:
+            input_data = input_data.unsqueeze(0)  # (1, W)
+        elif input_data.dim() == 2:
+            pass  # already (C, W)
+        elif input_data.dim() == 3 and input_data.shape[-1] == 1:
+            input_data = input_data.squeeze(-1)  # (C, W, 1) -> (C, W)
+        else:
+            raise ValueError(f"peak.data must be 1D or 2D, got shape {tuple(input_data.shape)}")
+
+        if self.include_marker:
+            marker_idx = StrategyRegistry.get_scaling_strategy().marker_to_idx[peak.get_marker_name()]
+            marker_tensor = torch.tensor([marker_idx], dtype=torch.long)
+        else:
+            marker_tensor = torch.full((1,), -1, dtype=torch.long)
+
+        return {
+            'peak': input_data,
+            'target': target,
+            'adjusted_panel': adjusted_panel,
+            'marker_idx': marker_tensor,
+        }
 
 class PeakClassification(BaseModel):
+    def get_transform(self) -> TransformData:
+        return PeakClassifierTransformData(include_marker=self.include_marker, label_to_idx=self.label_to_idx)
+
+    @staticmethod
+    def collate_fn(batch: List[dict]) -> dict:
+        peaks = [item['peak'] for item in batch]
+        targets = torch.tensor([item['target'] for item in batch], dtype=torch.long)
+        adjusted_panels = [item['adjusted_panel'] for item in batch]
+        marker_idxs = torch.tensor([item['marker_idx'] for item in batch], dtype=torch.long)
+
+        return {
+            'peak': peaks,
+            'target': targets,
+            'adjusted_panel': adjusted_panels,
+            'marker_idx': marker_idxs,
+        }
+
+
     def __init__(self,
                  labels: List[str],
                  device: Optional[str] = None,
@@ -77,72 +132,6 @@ class PeakClassification(BaseModel):
         targets = nn.functional.one_hot(y_true, num_classes=self.num_classes).to(dtype=log_probs.dtype)
         return self._kl_div(log_probs, targets)
 
-    def get_input(self, peak: ExtractedPeak) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Get the input for a single image as a tensor on the correct
-        device.
-        Output shape: ((C, W), (1,))
-
-
-        Returns: tensor of shape (C, W), type torch.float32 and marker tensor of shape (1,), type torch.long
-
-        """
-        x = torch.as_tensor(peak.data, dtype=torch.float32)
-        # Ensure shape (C, W)
-        if x.dim() == 1:
-            x = x.unsqueeze(0)  # (1, W)
-        elif x.dim() == 2:
-            pass  # already (C, W)
-        elif x.dim() == 3 and x.shape[-1] == 1:
-            x = x.squeeze(-1)  # (C, W, 1) -> (C, W)
-        else:
-            raise ValueError(f"peak.data must be 1D or 2D, got shape {tuple(x.shape)}")
-
-        if self.include_marker:
-            marker_idx = MARKER_TO_IDX.get(peak.get_marker_name(), len(MARKER_TO_IDX))
-            marker_tensor = torch.tensor([marker_idx], dtype=torch.long)  # shape (1,)
-        else:
-            marker_tensor = torch.full((1,), -1, dtype=torch.long)
-
-        return x, marker_tensor
-
-    def get_inputs(self, peaks: Sequence[ExtractedPeak]) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Get the inputs for multiple images as a tensor on the correct device.
-        Input shape: (N,)
-
-        Args:
-            peaks: the peaks to get the inputs for
-
-        Returns: tensor of shape (N, C, W), type torch.float32 and marker tensor of shape (N,), type torch.long
-
-        """
-        peak_data, marker_indices = zip(*(self.get_input(peak) for peak in peaks))
-
-        peak_data_tensor = torch.stack(peak_data).to(self._device)
-        marker_indices_tensor = torch.stack(marker_indices).squeeze(1).to(self._device)
-
-        assert peak_data_tensor.dim() == 3, f"Expected peak_data_tensor to have 3 dimensions, got {peak_data_tensor.dim()}"
-        assert marker_indices_tensor.dim() == 1, f"Expected marker_indices_tensor to have 1 dimension, got {marker_indices_tensor.dim()}"
-
-        return peak_data_tensor, marker_indices_tensor
-
-
-    def get_targets(self,
-                    peaks: Sequence[HIDImage]) -> torch.Tensor:
-        """
-        Get the targets for multiple images as a tensor on the correct device.
-        target shape: (N,)
-        Args:
-            peaks: the peaks to get the targets for
-
-        Returns: tensor of shape (N,)
-        """
-        targets = []
-        for peak in peaks:
-            targets.append(self.label_to_idx[peak.annotation.label])
-
-        return torch.tensor(targets).to(self._device)
 
     def predict_class(self, probs: torch.Tensor) -> str:
         """
@@ -188,8 +177,10 @@ class PeakClassification(BaseModel):
         """
         return torch.softmax(logits, dim=1)
 
-    def create_predictions(self, logits: torch.Tensor, batch: Sequence[HIDImage]) -> List[Prediction]:
-        return [Prediction(classification=dict(zip(self.labels, map(float, probs))))
-                           # meta={"predicted_label": self.predict_class(probs)})
-                    for probs in self.compute_probabilities(logits)]
+    def create_predictions(self, logits: torch.Tensor, batch: dict) -> List[PeakPrediction]:
+        predictions = []
+        for probs in self.compute_probabilities(logits):
+            pred_dict = dict(zip(self.labels, map(float, probs)))
+            predictions.append(PeakPrediction(data=pred_dict))
+        return predictions
 

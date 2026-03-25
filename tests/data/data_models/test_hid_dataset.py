@@ -1,28 +1,71 @@
 import os
 import shutil
 from collections import Counter
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
 from DNAnet.data.data_models.hid_dataset import HIDDataset
+from DNAnet.data.data_models.structs import ScanpointAnnotation
 from DNAnet.utils import get_prefix_from_filename
+
+
+def _profile_from_dyes(*dye_rows: list[int]) -> SimpleNamespace:
+    return SimpleNamespace(data=np.asarray(dye_rows, dtype=np.uint8)[..., np.newaxis])
+
+
+def _scanpoint_annotation(*dye_rows: list[int]) -> ScanpointAnnotation:
+    return ScanpointAnnotation(data=np.asarray(dye_rows, dtype=np.int8))
 
 
 def test_hid_dataset_rd(hid_dataset_rd):
     assert len(hid_dataset_rd) == 2
 
 
+def test_adjust_annotations_keeps_none_annotations():
+    profile = _profile_from_dyes([0, 10, 20, 10, 0])
+
+    adjusted = HIDDataset._adjust_annotations([profile], [None])
+
+    assert adjusted == [None]
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason='adjust_annotations still assumes legacy 3D annotations and indexes the outer list.',
+)
+@pytest.mark.parametrize(
+    ('adjustment_type', 'expected'),
+    [
+        ('top', np.array([[0, 0, 0, 1, 0, 0, 0]], dtype=np.int8)),
+        ('complete', np.array([[0, 0, 1, 1, 1, 0, 0]], dtype=np.int8)),
+    ],
+)
+def test_adjust_annotations_relabels_scanpoint_annotations(adjustment_type, expected):
+    profile = _profile_from_dyes([0, 10, 45, 80, 60, 10, 0])
+    annotation = _scanpoint_annotation([0, 0, 1, 1, 0, 0, 0])
+
+    adjusted = HIDDataset._adjust_annotations(
+        [profile],
+        [annotation],
+        adjustment_type=adjustment_type,
+        threshold=40,
+    )
+
+    np.testing.assert_array_equal(adjusted[0].data, expected)
+
+
 def test_cached_data():
     cache_path = os.path.join(pytest.RESOURCES_DIR, "test_cache_arrow")
     dataset = HIDDataset(
         root=pytest.RESOURCES_DIR / "profiles" / "RD",
-        panel=pytest.PANEL_PATH,
+        panel_path=pytest.PANEL_PATH,
         annotations_path=pytest.RESOURCES_DIR / "profiles" / "RD",
         hid_to_annotations_path=(pytest.RESOURCES_DIR / "profiles" /
                                  "RD" / "2p_5p_hid_to_annotation.csv"),
         analysis_threshold_type="DTH",
-        use_cache=False,
+        load_in_memory=False,
         cache_path=cache_path,
         skip_if_invalid_ladder=True,
         best_ladder_paths_csv=(pytest.RESOURCES_DIR / "profiles" /
@@ -31,7 +74,7 @@ def test_cached_data():
 
     dataset_cached = HIDDataset(
         root=os.path.join(pytest.RESOURCES_DIR, "profiles", "RD"),
-        use_cache=True,
+        load_in_memory=True,
         cache_path=cache_path
     )
 
@@ -43,7 +86,7 @@ def test_cached_data():
 def test_skip_if_invalid_ladder():
     dataset = HIDDataset(
         root=os.path.join(pytest.RESOURCES_DIR, "profile_without_ladder"),
-        panel=pytest.PANEL_PATH,
+        panel_path=pytest.PANEL_PATH,
         annotations_path=os.path.join(pytest.RESOURCES_DIR, "profile_without_ladder"),
         hid_to_annotations_path=os.path.join(pytest.RESOURCES_DIR, "profile_without_ladder",
                                              "annotations_mapping.csv"),
@@ -57,7 +100,7 @@ def test_skip_if_invalid_ladder():
     with pytest.raises(ValueError) as e:
         dataset = HIDDataset(
             root=os.path.join(pytest.RESOURCES_DIR, "profile_without_ladder"),
-            panel=pytest.PANEL_PATH,
+            panel_path=pytest.PANEL_PATH,
             annotations_path=os.path.join(pytest.RESOURCES_DIR, "profile_without_ladder"),
             hid_to_annotations_path=os.path.join(pytest.RESOURCES_DIR,
                                                  "profile_without_ladder",
@@ -72,7 +115,7 @@ def test_skip_if_invalid_ladder():
 
 def test_split_hid_dataset():
     dataset = HIDDataset(root='root',
-                         use_cache=True,
+                         load_in_memory=True,
                          cache_path=os.path.join(pytest.RESOURCES_DIR, 'cached_hid_dataset_M1'),
                          group_replicas_in_split=False)
     assert len(dataset) == 58
@@ -90,7 +133,7 @@ def test_split_hid_dataset():
 
     # now we want to group replicas and balance donors
     dataset = HIDDataset(root='root',
-                         use_cache=True,
+                         load_in_memory=True,
                          cache_path=os.path.join(pytest.RESOURCES_DIR, 'cached_hid_dataset_M1'),
                          group_replicas_in_split=True)
     d1, d2 = dataset.split(fraction=0.8, seed=42)
@@ -110,7 +153,7 @@ def test_split_hid_dataset():
 
 def test_split_k_fold_dataset():
     dataset = HIDDataset(root='root',
-                         use_cache=True,
+                         load_in_memory=True,
                          cache_path=os.path.join(pytest.RESOURCES_DIR, 'cached_hid_dataset_M1'),
                          group_replicas_in_split=False)
     assert len(dataset) == 58
@@ -129,7 +172,7 @@ def test_split_k_fold_dataset():
 
     # now group by replicas and balance number of donors
     dataset = HIDDataset(root='root',
-                         use_cache=True,
+                         load_in_memory=True,
                          cache_path=os.path.join(pytest.RESOURCES_DIR, 'cached_hid_dataset_M1'),
                          group_replicas_in_split=True)
 

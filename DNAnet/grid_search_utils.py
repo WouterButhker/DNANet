@@ -11,9 +11,11 @@ import confidence
 import mlflow
 import numpy as np
 from confidence import Configuration
+from torch.utils.data import Dataset
 from tqdm import tqdm
 
 from DNAnet.data.data_models.base import InMemoryDataset, Metric
+from DNAnet.data.strategies.strategy_registry import StrategyRegistry
 from DNAnet.models.base_model import TrainableModel
 from DNAnet.typing import PathLike
 from config_io import parse_config, load_model
@@ -227,7 +229,7 @@ def sample_random_trial(search_space: Dict[str, Any]) -> Dict[str, Any]:
 
 def cross_val_mean_score(
         train_func: Callable[..., float],
-        base_training_set: InMemoryDataset,
+        base_training_set: Dataset,
         k: int,
         seed: int,
         logger: Optional[logging.Logger],
@@ -238,7 +240,8 @@ def cross_val_mean_score(
     For each fold i: train on CombinedDataset(other folds), validate on fold i.
     Returns (mean, std) of the metric across folds.
     """
-    folds = base_training_set.split_k_fold(k, seed=seed)
+
+    folds = StrategyRegistry.get_dataset()._split_dataset_k_fold(base_training_set, k_folds=k, seed=seed)
     scores: List[float] = []
 
     for i in range(k):

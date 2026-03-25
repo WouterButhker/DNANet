@@ -7,14 +7,15 @@ import scipy.interpolate
 from matplotlib import pyplot as plt
 from matplotlib.lines import Line2D
 
-from DNAnet.models.base_model import Model
-from DNAnet.utils import get_marker_ranges
-from config_io import load_dataset, load_model
 from DNAnet.data.data_models.dna_models import Marker, Panel
 from DNAnet.data.data_models.hid_dataset import HIDDataset
 from DNAnet.data.data_models.hid_image import HIDImage
-from DNAnet.evaluation.visualizations import DNA_CHANNELS
-from DNAnet.models.prediction import Prediction
+from DNAnet.data.data_models.structs import Prediction
+from DNAnet.data.strategies.strategy_registry import StrategyRegistry
+from DNAnet.models.base_model import Model
+from DNAnet.typing import PathLike
+from DNAnet.utils import get_marker_ranges
+from config_io import load_dataset, load_model
 
 # Set up matplotlib parameters for the paper figures text size
 plt.rcParams.update(
@@ -169,6 +170,8 @@ def plot_allele_profile(
     if marker_selection:
         x_values = x_values[marker_bin]
 
+    dye_colors = StrategyRegistry.get_scaling_strategy().dye_channel_colors()
+
     for idx, ax in enumerate(
         axes,
     ):
@@ -181,7 +184,7 @@ def plot_allele_profile(
             image.data[idx, :, 0]
             if not marker_selection
             else image.data[dye_row, marker_bin, 0],
-            color=DNA_CHANNELS[idx] if not marker_selection else DNA_CHANNELS[dye_row],
+            color=dye_colors[idx] if not marker_selection else dye_colors[dye_row],
         )
         ax.set_ylabel("RFU")
 
@@ -290,6 +293,20 @@ def save_figure(fig: plt.Figure, path: str):
     fig.savefig(path)
     plt.close(fig)
 
+def _get_hid_image_by_name(dataset: HIDDataset, hid_file_name: PathLike) -> Optional[HIDImage]:
+    """
+    Retrieve a HIDImage from the dataset by comparing the HID file names (that is
+    1A2_A01_01 (with or without .hid file extension)). Return None if no images were found.
+    """
+    hid_file_name = str(Path(hid_file_name).stem)
+
+    image = [im for im, _, _ in dataset if im.path.stem == hid_file_name]
+    if len(image) > 1:
+        raise ValueError(f"Found more than one ({len(image)}) for file name {hid_file_name}")
+    if len(image) == 0:
+        return None
+    return image[0]
+
 
 def generate_figures(
     model: Model,
@@ -310,7 +327,7 @@ def generate_figures(
     Path(output_dir).mkdir(exist_ok=True)
 
     figure_images = [
-        (hid_name, marker, dataset.get_hid_image_by_name(hid_name))
+        (hid_name, marker, _get_hid_image_by_name(hid_name))
         for hid_name, marker in selected_hids_markers
     ]
     for hid_name, marker, image in figure_images:
@@ -347,7 +364,7 @@ def create_bin_type_plot(dataset: HIDDataset) -> None:
     fig, ax = plt.subplots(ncols=3, figsize=(12, 4), dpi=400)
 
     # We used a specific image for this plot, so we load it directly
-    _data = dataset.get_hid_image_by_name("1A2_E01_13")._data
+    _data = _get_hid_image_by_name("1A2_E01_13")._data
     letters = ["A", "B", "C"]
     # The highlight ranges explaining the different bin types
     highlight_ranges = [(15, 22), (19, 19), (8, 32)]

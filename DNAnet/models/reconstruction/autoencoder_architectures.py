@@ -1,5 +1,5 @@
 import abc
-from typing import Tuple
+from typing import Tuple, Any
 
 import torch
 from torch import nn
@@ -19,20 +19,20 @@ class AbstractAutoEncoder(nn.Module, abc.ABC):
         self.device = device
         self.in_channels = in_channels
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, batch: dict[str, Any]) -> torch.Tensor:
         """
         Forward pass of the autoencoder.
-        :param x: Input tensor.
+        :param batch: Input values.
         :return: Output tensor after encoding and decoding.
         """
-        return self.decoder(self.encoder(x))
+        return self.decoder(self.encoder(batch))
 
 
     @abc.abstractmethod
-    def encoder(self, x: torch.Tensor) -> torch.Tensor:
+    def encoder(self, batch: dict[str, Any]) -> torch.Tensor:
         """
         Encoder part of the autoencoder.
-        :param x: Input tensor.
+        :param batch: Input values.
         :return: Encoded tensor.
         """
         raise NotImplementedError
@@ -210,7 +210,8 @@ class Conv1dAutoencoder(AbstractAutoEncoder):
         y = self.decoder_module(z)
         return y
 
-    def encoder(self, x: torch.Tensor) -> torch.Tensor:
+    def encoder(self, batch: dict[str, Any]) -> torch.Tensor:
+        x = batch['input']
         return self.encoder_module(x)
 
     def encoded_shape(self) -> Tuple[int, ...]:
@@ -284,11 +285,13 @@ class PerDyeConv1dAutoencoder(AbstractAutoEncoder):
 
         self.to(device)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: dict[str, Any]) -> torch.Tensor:
         decoded = self.decoder(self.encoder(x))
         return decoded
 
-    def encoder(self, x: torch.Tensor) -> torch.Tensor:
+    def encoder(self, batch: dict[str, Any]) -> torch.Tensor:
+        x = batch['input']
+
         # Accept (N, C, L, 1) or (N, C, L)
         if x.dim() == 4 and x.shape[-1] == 1:
             x = x.squeeze(-1)

@@ -10,7 +10,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Optional, Union, Tuple, Callable, Dict, Set, List
+from typing import Optional, Union, Tuple, Callable, Dict, List
 
 import numpy as np
 import scipy
@@ -284,6 +284,8 @@ class GlobalFilerScalingStrategy(ScalingStrategy):
         kit = STRKit(
             name="GlobalFiler",
             size_standard=GENESCAN_600_LIZ_BPS,
+            raw_data_columns= ["DATA_1", "DATA_2", "DATA_3", "DATA_4", "DATA_106", "DATA_105"],
+            analyzed_data_columns= ["DATA_9", "DATA_10", "DATA_11", "DATA_12", "DATA_205", "DATA_206"],
             num_dyes=6,
             panel_path= _GLOBALFILER_PANEL_PATH,
             panel=Panel(_GLOBALFILER_PANEL_PATH),
@@ -382,6 +384,8 @@ class PowerPlexFusion6CScalingStrategy(ScalingStrategy):
         kit = STRKit(
             name="PPF6C",
             size_standard=WEN_ILS_BPS,
+            raw_data_columns= ["DATA_1", "DATA_2", "DATA_3", "DATA_4", "DATA_106", "DATA_105"],
+            analyzed_data_columns= ["DATA_9", "DATA_10", "DATA_11", "DATA_12", "DATA_205", "DATA_206"],
             num_dyes=6,
             panel_path=_POWER_PLEX_FUSION_6C_PANEL_PATH,
             panel=Panel(

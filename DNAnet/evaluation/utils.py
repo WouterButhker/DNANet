@@ -4,8 +4,7 @@ from typing import Dict, Mapping, Optional, Sequence, Set, Union, List, Tuple
 
 from scipy.signal import find_peaks
 
-from DNAnet.data.data_models import Marker
-
+from DNAnet.data.data_models.dna_models import Marker
 
 LOGGER = logging.getLogger('dnanet')
 

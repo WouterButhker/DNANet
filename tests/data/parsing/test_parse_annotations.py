@@ -48,10 +48,10 @@ def test_translate_allele_to_scanpoint_annotation(ppf6c_kit):
     scaler = np.arange(4096)
     annotation =  Marker(dye_row=0, name='AMEL', alleles=[
         Allele(name='X', base_pair=81.5, left_bin=81.0, right_bin=82.0)])
-    allele_annotation = AlleleAnnotation(annotation=[annotation])
+    allele_annotation = AlleleAnnotation(data=[annotation])
 
     scanpoint_annotation = HIDDataset._translate_allele_to_scanpoint_annotation(allele_annotation, adjusted_panel=panel, scaler=scaler)
 
-    assert scanpoint_annotation.annotation[0, 81:82].all() == 1
-    assert scanpoint_annotation.annotation[0, :81].all() == 0
-    assert scanpoint_annotation.annotation[0, 82:].all() == 0
+    assert scanpoint_annotation.data[0, 81:82].all() == 1
+    assert scanpoint_annotation.data[0, :81].all() == 0
+    assert scanpoint_annotation.data[0, 82:].all() == 0

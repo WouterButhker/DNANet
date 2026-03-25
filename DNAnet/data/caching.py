@@ -1,19 +1,16 @@
 import os
-from functools import lru_cache
 from itertools import chain, islice
 from pathlib import Path
 from typing import Generator, Optional, Sequence, Tuple
 
 import datasets
-import numpy as np
 from datasets import Array3D, Features, Value, load_from_disk
 from datasets import Dataset as HFDataset
 from tqdm import tqdm
 
-from DNAnet.data.data_models import Annotation, Panel
 from DNAnet.data.data_models.hid_image import HIDImage
 from DNAnet.typing import PathLike
-from DNAnet.utils import dict_to_marker_list, get_noc_from_rd_file_name, marker_list_to_dict
+from DNAnet.utils import marker_list_to_dict
 
 
 def _load_cached_hf_data(cache_path: PathLike, limit: Optional[int], include_size_standard: bool) -> Sequence[HIDImage]:
@@ -111,17 +108,18 @@ def create_from_huggingface_dataset(item: dict, include_size_standard: bool) -> 
     :param include_size_standard: whether to include the size standard in the HIDImage
     :return: HIDImage
     """
-    annotation = Annotation(image=np.asarray(item['annotations'], dtype='int8'))
-    img = HIDImage(path=item['hid_paths'],
-                   panel=Panel(panel_contents=dict_to_marker_list(item['panel_contents'], True)),
-                   include_size_standard=include_size_standard,
-                   annotation=annotation,
-                   use_cache=True)
-    img._data = np.asarray(item['images'], dtype='int16')
-    img._scaler = np.array(item['scalers'])
-    img._meta['called_alleles'] = dict_to_marker_list(item['called_alleles'], True)
-    img._meta['noc'] = get_noc_from_rd_file_name(Path(item['hid_paths']).name)
-    return img
+    # annotation = Annotation(image=np.asarray(item['annotations'], dtype='int8'))
+    # img = HIDImage(path=item['hid_paths'],
+    #                panel=Panel(panel_contents=dict_to_marker_list(item['panel_contents'], True)),
+    #                include_size_standard=include_size_standard,
+    #                annotation=annotation,
+    #                load_in_memory=True)
+    # img._data = np.asarray(item['images'], dtype='int16')
+    # img._scaler = np.array(item['scalers'])
+    # img._meta['called_alleles'] = dict_to_marker_list(item['called_alleles'], True)
+    # img._meta['noc'] = get_noc_from_rd_file_name(Path(item['hid_paths']).name)
+    # TODO
+    return None
 
 
 def write_to_hf_cache(cache_path: PathLike, hid_images: Sequence[HIDImage], include_size_standard: bool):

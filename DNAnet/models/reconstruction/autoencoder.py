@@ -1,23 +1,49 @@
 import logging
-from typing import Optional, Tuple, Sequence, List
+from dataclasses import dataclass
+from typing import Optional, Sequence, List
 
 import numpy as np
 import torch
 import torchmetrics
 from torch import Tensor
-
 from torchmetrics import Metric
 
 from DNAnet.data.data_models.hid_image import HIDImage
+from DNAnet.data.data_models.structs import ScanpointPrediction
 from DNAnet.data.preprocessing.preprocess_item import RFU_MAX_VALUE, inverse_scale_data, preprocess_profile_torch
-from DNAnet.models.base_model import BaseModel
-from DNAnet.models.prediction import Prediction
+from DNAnet.models.base_model import BaseModel, TransformData
 from DNAnet.models.reconstruction.autoencoder_architectures import Conv1dAutoencoder, PerDyeConv1dAutoencoder, \
     SharedWeightPerDyeConv1dAutoencoder
 from DNAnet.models.reconstruction.autoencoder_baselines import FourierAutoEncoder
 
 LOGGER = logging.getLogger('dnanet')
 
+
+
+
+@dataclass
+class AutoencoderTransformData(TransformData):
+    preprocessing_log_scale: bool = True
+    preprocessing_max_rfu_scale_value: Optional[int] = RFU_MAX_VALUE
+    preprocessing_num_dyes_included: int = 6
+
+    def __call__(self, data: dict) -> dict:
+        image: HIDImage = data['image']
+        scaler: np.ndarray = data['scaler']
+
+        input_data = preprocess_profile_torch(image,
+                                          log_scale=self.preprocessing_log_scale,
+                                          max_rfu_scale_value=self.preprocessing_max_rfu_scale_value,
+                                          num_dyes_included=self.preprocessing_num_dyes_included)
+
+        target = torch.tensor(image.data, dtype=torch.float32)
+        scaler_data = torch.tensor(scaler, dtype=torch.float32)
+        return {
+            'input': input_data,
+            'target': target,
+            'adjusted_panel': data['adjusted_panel'],
+            'scaler': scaler_data,
+        }
 
 class Autoencoder(BaseModel):
 
@@ -87,6 +113,10 @@ class Autoencoder(BaseModel):
 
         self.encoded_shape = self._model.encoded_shape()
 
+    def get_transform(self) -> TransformData:
+        return AutoencoderTransformData(preprocessing_log_scale=self.preprocessing_log_scale,
+                                        preprocessing_max_rfu_scale_value=self.preprocessing_max_rfu_scale_value,
+                                        preprocessing_num_dyes_included=self.preprocessing_num_dyes_included)
 
     def denormalize(self, tensor: torch.Tensor) -> torch.Tensor:
         return inverse_scale_data(
@@ -98,30 +128,14 @@ class Autoencoder(BaseModel):
     def _not_trainable(self, *args, **kwargs):
         raise ValueError(f"This model ({self.architecture}) is not trainable. Please use the epoch function to compute loss and metrics.")
 
-    def get_input(self, image: HIDImage) -> torch.Tensor:
-        data = preprocess_profile_torch(image,
-                                        log_scale=self.preprocessing_log_scale,
-                                        max_rfu_scale_value=self.preprocessing_max_rfu_scale_value,
-                                        num_dyes_included=self.preprocessing_num_dyes_included)
-        return data.to(self._device)
-
-    def get_targets(self, images: Sequence[HIDImage]) -> torch.Tensor:
-        """
-        Returns the targets for the autoencoder, which are the same as the input images.
-        """
-        return (
-        torch.stack(
-            [torch.tensor(img.data, dtype=torch.float32, device=self._device) for img in images],
-            dim=0
-        ).squeeze(-1))
 
 
     def step(self,
-             batch,
+             batch: dict[str, torch.Tensor],
              metrics=None) -> torch.Tensor:
         # 1. Get preprocessed inputs and "targets" (autoencoder targets = inputs)
-        inputs = self.get_inputs(batch)           # preprocessed
-        y_true = self.get_targets(batch)
+        inputs = batch['input']
+        y_true = batch['target']
 
 
         # 2. Forward pass in preprocessed space
@@ -161,13 +175,13 @@ class Autoencoder(BaseModel):
         metric.update(reconstruction, y_true)
 
 
-    def create_predictions(self, logits: torch.Tensor, batch: Sequence[HIDImage]) -> List[Prediction]:
+    def create_predictions(self, logits: torch.Tensor, batch: Sequence[HIDImage]) -> List[ScanpointPrediction]:
         predictions = []
         reconstructions = self.denormalize(logits)
         for profile in reconstructions:
             pred_image = profile.cpu().numpy()
 
-            prediction = Prediction(image=pred_image)
-            predictions.append([prediction])
+            prediction = ScanpointPrediction(data=pred_image)
+            predictions.append(prediction)
 
         return predictions

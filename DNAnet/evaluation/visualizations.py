@@ -10,14 +10,16 @@ from matplotlib.patches import Rectangle
 
 
 from DNAnet.constants import LABEL_CATEGORIES, LABEL_CATEGORIES_STR
-from DNAnet.data.data_models import Marker
+from DNAnet.data.data_models.dna_models import Marker
+
 from DNAnet.data.data_models.hid_image import HIDImage
+from DNAnet.data.data_models.structs import Prediction
 from DNAnet.data.strategies.strategy_registry import StrategyRegistry
 from DNAnet.data.utils import full_annotation_array_to_list
 from DNAnet.evaluation.interactivity import Interactivity
 from DNAnet.evaluation.utils import get_peaks
 from DNAnet.models.base_model import Model
-from DNAnet.models.prediction import Prediction
+
 from DNAnet.utils import _get_marker_bin, get_allele_bins
 
 
@@ -323,6 +325,7 @@ def _plot_profile_marker(marker: Marker,
                          prediction: Optional[Prediction],
                          ax,
                          zoom_x_values: Optional[Tuple[int, int]]):
+    # TODO fix
     dye_row = marker.dye_row
     marker_bin = _get_marker_bin(marker)
     _slice = np.arange(*tuple(np.argmin(np.abs(image._scaler - marker_bin), axis=1)))

@@ -1,25 +1,60 @@
 import logging
 import os
-from typing import Optional, List, Mapping, Any, Tuple, Sequence
+from dataclasses import dataclass
+from typing import Optional, List, Mapping, Any, Sequence
 
+import numpy as np
 import torch
 import torchmetrics
-from torch import nn
 from torchmetrics import Metric
 
-from DNAnet.data.data_models.base import Image
+from DNAnet.data.data_models.dna_models import Panel
 from DNAnet.data.data_models.hid_image import HIDImage
-from DNAnet.data.preprocessing.peak_extraction import extract_peaks_torch, extract_peak_windows
-from DNAnet.data.preprocessing.peak_utils import get_peak_centers
-from DNAnet.models.base_model import BaseModel
+from DNAnet.data.data_models.structs import ScanpointAnnotation, ScanpointPrediction
+from DNAnet.data.preprocessing.peak_extraction import extract_peaks_torch
+from DNAnet.models.base_model import BaseModel, TransformData
 from DNAnet.models.classification.peak_classification import PeakClassification
-from DNAnet.models.prediction import Prediction
 from DNAnet.models.reconstruction.autoencoder import Autoencoder
 from DNAnet.models.segmentation.peaknet_architecture import CombinedClassifier, PeakOnlyClassifier
 from DNAnet.typing import PathLike
 from config_io import load_model
 
 LOGGER = logging.getLogger('dnanet')
+
+
+@dataclass
+class CombinedPeakNetTransformData(TransformData):
+    threshold: int = 40,
+    window_size: int = 120,
+    include_max_pool_dyes: bool = True,
+
+    def __call__(self, data: dict) -> dict:
+        image: HIDImage = data['image']
+        scaler: np.ndarray = data['scaler']
+        annotation: Optional[ScanpointAnnotation] = data['annotation']
+        adjusted_panel: Optional[Panel] = data['adjusted_panel']
+
+        peak_tensors, marker_idx, peak_centers = extract_peaks_torch(image,
+                                                                     adjusted_panel,
+                                                                     self.threshold,
+                                                                     self.window_size,
+                                                                     self.include_max_pool_dyes)
+
+        scaler_data = torch.tensor(scaler, dtype=torch.float32)
+        image_data = torch.tensor(image.data, dtype=torch.float32)
+        target = torch.tensor(annotation.data, dtype=torch.long) if annotation else None
+
+        return {
+            'image': image_data, # (C, L)
+            'target': target, # (C, L)
+            'peak_windows': peak_tensors, # (N_p, C_p, W)
+            'marker_idxs': marker_idx, # (N_p,)
+            'peak_centers': peak_centers, # (N_p, 2)
+            'adjusted_panel': adjusted_panel, # (B,)
+            'scaler': scaler_data, # (L,)
+        }
+
+
 
 class CombinedPeakNet(BaseModel):
 
@@ -99,105 +134,31 @@ class CombinedPeakNet(BaseModel):
 
         super().__init__(model, loss)
 
-
-    def get_input(self, image: HIDImage, use_torch: bool = True) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        """
-        Get the input tensors for the combined model from the image.
-
-        image tensors has shape (C, 4096) and type torch.float32
-        peak tensors has shape  ((N_p, C, W), (N_p,)) and type float32
-        marker idx has shape (N_p,) and type torch.long
-        peak centers has shape (N_p, 2) and type torch.long
-
-        All tensors are moved to self._device.
-
-        Args:
-            image: Image object.
-            use_torch: whether to use the torch implementation of peak extraction. If False, uses the numpy implementation.
-
-        Returns: A tuple of (image_tensor, peak_tensors, marker_idx, peak_centers)
-        """
-        if use_torch:
-            peak_tensors, marker_idx, peak_centers = extract_peaks_torch(image,
-                                                                         self._device,
-                                                                         self.threshold,
-                                                                         self.window_size,
-                                                                         self.peak_classifier.include_max_pool_dyes)
-        else:
-            peaks = extract_peak_windows(image,
-                                         threshold=self.threshold,
-                                         window_size=self.window_size,
-                                         use_ground_truth_labels=False,
-                                         include_raw_annotation=True,
-                                         include_max_pool_dyes=self.peak_classifier.include_max_pool_dyes) # (N_p,)
-
-            peak_tensors, marker_idx = self.peak_classifier.get_inputs(peaks) # peak_tensors: ((N_p, C, W), marker_idx: (N_p,))
-            peak_centers = get_peak_centers(peaks).to(self._device) # (N_p, 2); index 0: dye index, index 1: center position
+    def get_transform(self) -> TransformData:
+        return CombinedPeakNetTransformData()
 
 
-        if self.autoencoder is not None:
-            image_tensor = self.autoencoder.get_input(image) # (C, 4096, 1)
-            image_tensor = image_tensor.squeeze(-1)  # (C, 4096)
-        else:
-            image_tensor = torch.from_numpy(image.data).to(device=self._device, dtype=torch.float32).squeeze() # (C, 4096)
+    @staticmethod
+    def collate_fn(batch: List[dict]) -> dict:
+        ## could be optimized by only iterating over batch once
+        images = torch.tensor([item['image'] for item in batch]) # (B, C, L)
+        targets = torch.tensor([item['target'] for item in batch]) # (B, C, L)
+        adjusted_panel = [item['adjusted_panel'] for item in batch] # (B,)
+        scaler = torch.tensor([item['scaler'] for item in batch]) # (B, L)
+        peak_tensors = torch.nested.nested_tensor([item['peak_windows'] for item in batch], layout=torch.jagged) # (N, N_p, C, W)
+        marker_idx = torch.nested.nested_tensor([item['marker_idxs'] for item in batch], layout=torch.jagged) # (N, N_p)
+        peak_centers = torch.nested.nested_tensor([item['peak_centers'] for item in batch], layout=torch.jagged) # (N, N_p, 2)
 
-        return image_tensor, peak_tensors, marker_idx, peak_centers
+        return {
+            'image': images,
+            'target': targets,
+            'adjusted_panel': adjusted_panel,
+            'scaler': scaler,
+            'peak_windows': peak_tensors,
+            'marker_idxs': marker_idx,
+            'peak_centers': peak_centers,
+        }
 
-
-    def get_inputs(self, images: Sequence[HIDImage]) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        """
-        Get the input tensors for multiple images as a tuple of tensors.
-
-        peak_tensors, marker_idx, peak_centers are nested tensors because the number of peaks per image can vary.
-        The N_p dimension is ragged-shaped, it varies for every N.
-
-        Args:
-            images: Sequence of HIDImage objects.
-
-        Returns: A tuple of (image_tensors, peak_tensors_list, marker_idx_list, peak_centers_list)
-            - image_tensors: Tensor of shape (N, C, 4096) and type torch.float32
-            - peak_tensors_list: NestedTensor of shape (N, N_p, C, W) and type torch.float32
-            - marker_idx_list: NestedTensor of shape (N, N_p) and type torch.long
-            - peak_centers_list: NestedTensor of shape (N, N_p, 2) and type torch.long
-
-        """
-        image_tensors = []
-        peak_tensors_list = []
-        marker_idx_list = []
-        peak_centers_list = []
-        for image in images:
-            image_tensor, peak_window, marker_idx, peak_center = self.get_input(image)
-            # image tensor: (C, 4096)
-            # peak_window: (N_p, C, W),
-            # marker_idx: (N_p,)
-            # peak_centers: (N_p, 2)
-
-            image_tensors.append(image_tensor)
-            peak_tensors_list.append(peak_window)
-            marker_idx_list.append(marker_idx)
-            peak_centers_list.append(peak_center)
-
-
-        image_tensors = torch.stack(image_tensors)  # (N, C, 4096)
-
-        # We use nested tensors because N_p is ragged-shaped: the number of peaks per image can vary
-        peak_tensors_list = torch.nested.nested_tensor(peak_tensors_list, layout=torch.jagged, device=self._device) # (N, N_p, C, W)
-        # marker_idx_list = torch.nested.nested_tensor_from_jagged(values=marker_idx_list, offsets=peak_tensors_list.offsets()) # (N, N_p)
-
-        marker_idx_list = torch.nested.nested_tensor(marker_idx_list, layout=torch.jagged, device=self._device) # (N, N_p)
-        peak_centers_list = torch.nested.nested_tensor(peak_centers_list, layout=torch.jagged, device=self._device) # (N, N_p, 2)
-
-        return image_tensors, peak_tensors_list, marker_idx_list, peak_centers_list
-
-
-    def get_targets(self,
-                    images: Sequence[Image]) -> torch.Tensor:
-
-        targets = []
-        for image in images:
-            img = torch.from_numpy(image.annotation.image) # (C, 4096, 1)
-            targets.append(img.squeeze(-1)) # (C, 4096)
-        return torch.stack(targets).to(device=self._device, dtype=torch.long) # (N, C, 4096)
 
     def set_up_metrics(self, use_evaluation_metric: bool) -> List[Optional[Metric]]:
         if not use_evaluation_metric:
@@ -234,7 +195,7 @@ class CombinedPeakNet(BaseModel):
         metric.update(preds_flat, targets_flat)
 
 
-    def create_predictions(self, logits: torch.Tensor, batch: Sequence[HIDImage]) -> List[Prediction]:
+    def create_predictions(self, logits: torch.Tensor, batch: Sequence[HIDImage]) -> List[ScanpointPrediction]:
         ## TODO: support for multiclass classification
         probs = torch.softmax(logits, dim=1) # (N, num_classes, C, 4096)
         y_pred = probs[:, 1, :, :]  # Take the probabilities for the 'allele' class (index 1) (N, C, 4096)
@@ -243,7 +204,7 @@ class CombinedPeakNet(BaseModel):
         predictions = []
         for pred_image in y_pred:
             pred_image_np = pred_image.cpu().numpy()
-            predictions.append(Prediction(image=pred_image_np))
+            predictions.append(ScanpointPrediction(data=pred_image_np))
 
         return predictions
 

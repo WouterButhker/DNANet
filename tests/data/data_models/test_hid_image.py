@@ -18,7 +18,7 @@ def test_hid_image(hid_dataset_rd):
     for hid_image in hid_dataset_rd:
         plot_profile([hid_image])
         image = hid_image.data
-        annotation = hid_image.annotation.image
+        annotation = hid_image.data.image
         # the annotation and the image should have the same shape
         assert annotation.shape == hid_image.data.shape
 
@@ -33,20 +33,20 @@ def test_hid_image(hid_dataset_rd):
         ref_image = np.load(str(hid_image.path).replace(".hid", ".npy"))
         assert np.array_equal(image, ref_image)
 
-        adjusted_image_top = hid_image.adjust_annotations("top")
+        adjusted_image_top = hid_image._adjust_annotations("top")
         plot_profile([adjusted_image_top])
         # the nr of labeled peak tops should be less or equal than the
         # number of called alleles
         n_called_alleles = sum([len(marker.alleles) for marker in hid_image.meta["called_alleles"]])
 
-        top_annotations = adjusted_image_top.annotation.image.copy()
+        top_annotations = adjusted_image_top.data.image.copy()
         assert np.sum(top_annotations) <= n_called_alleles  # <= since
         # subthreshold 'tops' are not labeled
 
-        adjusted_image_complete = hid_image.adjust_annotations("complete")
+        adjusted_image_complete = hid_image._adjust_annotations("complete")
         plot_profile([adjusted_image_complete])
         for layer_peak_top, layer_complete_peak in zip(
-            top_annotations, adjusted_image_complete.annotation.image
+            top_annotations, adjusted_image_complete.data.image
         ):
             layer_complete_peak = layer_complete_peak.flatten()
             # the number of labeled 'complete peaks' should be less or equal

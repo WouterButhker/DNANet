@@ -1,12 +1,13 @@
 from typing import Annotated, Dict, List, Union
 
-from pydantic import BaseModel, Field, model_validator
 import pydantic_numpy.typing as pnp
+from pydantic import BaseModel, Field, model_validator
+
 from DNAnet.data.data_models.dna_models import Marker
 
 
 class AlleleAnnotation(BaseModel):
-    annotation: List[Marker]
+    data: List[Marker]
 
     @model_validator(mode="before")
     @classmethod
@@ -29,15 +30,20 @@ class AlleleAnnotation(BaseModel):
 
 
 class ScanpointAnnotation(BaseModel):
-    annotation: pnp.Np2DArrayInt8 # annotations only store the class index, so int8 is sufficient
+    data: pnp.Np2DArrayInt8 # annotations only store the class index, so int8 is sufficient
 
 Annotation = Annotated[Union[AlleleAnnotation, ScanpointAnnotation], Field(discriminator="type")]
 
+class ClassAnnotation(BaseModel):
+    data: str
 
-class AllelePrediction(AlleleAnnotation):
-    pass
+class AllelePrediction(BaseModel):
+    data: List[Marker]
 
-class ScanpointPrediction(ScanpointAnnotation):
-    pass
+class ScanpointPrediction(BaseModel):
+    data: pnp.Np2DArrayFp32
+
+class PeakPrediction(BaseModel):
+    data: dict[str, float]
 
 Prediction = Annotated[Union[AllelePrediction, ScanpointPrediction], Field(discriminator="type")]

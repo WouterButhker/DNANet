@@ -4,19 +4,17 @@ from binascii import crc32
 from collections import defaultdict
 from functools import cached_property
 from pathlib import Path
-from typing import Any, Dict, List, MutableMapping, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 from scipy.signal import find_peaks
 
-from DNAnet.data.data_models.dna_models import Allele, Annotation, Marker, Panel
 from DNAnet.data.data_models.base import Image
-from DNAnet.data.parsing import get_peak_data, parse_called_alleles
+from DNAnet.data.data_models.dna_models import Allele, Marker, Panel
+from DNAnet.data.parsing.parse_raw_hid import get_peak_data
 from DNAnet.data.strategies.strategy_registry import StrategyRegistry
 from DNAnet.data.utils import (
-    assert_image_data_valid_format,
-    find_peak_boundary,
-    find_peak_idx_near_or_in_range
+    assert_image_data_valid_format
 )
 from DNAnet.typing import PathLike
 
@@ -28,59 +26,49 @@ class HIDImage(Image):
     Image representation of the raw peaks from a HID file serving as a DNA profile
 
     :param path: location of HID file
-    :param panel: the panel to be used
-    :param annotations_file: the path of the csv/txt file that contains
-        the annotations of the HID file.
     :param include_size_standard: include size standard in the data attribute.
         if `true` all six dyes are included. For inspection of the HID file.
         if `false` only the first five dyes are included. For training + testing models.
-    :param annotation: any Annotation belonging to the image
-    :param use_cache: whether retrieved peaks should be cached
-    :param data_loading_strategy: indicates how to load the data from the hid
+    :param load_in_memory: whether retrieved peaks should be cached
     :param skip_if_invalid_internal_standard: if True, drops the file if the internal standard
        cannot be parsed. If false, uses no internal scaling (use with care!).
-    :param meta: meta information of the HID file.
     """
-    THRESHOLD = 40  # 40 rfu is the lowest detection threshold
 
     def __init__(self,
                  path: PathLike,
-                 panel: Optional[Panel] = None,
-                 use_ground_truth_as_annotations: bool = False,
-                 annotations_file: PathLike = None,
                  include_size_standard: bool = False,
-                 annotation: Optional[Annotation] = None,
-                 use_cache: bool = True,
-                 data_loading_strategy: str = 'superior',
-                 skip_if_invalid_internal_standard: bool = True,
-                 meta: MutableMapping[str, Any] = None,
-                 full_annotation_image: np.ndarray = None):
-        if annotations_file and full_annotation_image:
-            raise ValueError("Too many annotations, choose one.")
-
+                 load_in_memory: bool = True,
+                 skip_if_invalid_internal_standard: bool = True):
         self.path = path if isinstance(path, Path) else Path(path)
-        self.annotations_file = annotations_file
         self.include_size_standard = include_size_standard
-        self.use_cache = use_cache
+        self.load_in_memory = load_in_memory
         self.skip_if_invalid_internal_standard = skip_if_invalid_internal_standard
         self.root = self.path.parent
         self._data: Optional[np.ndarray] = None
-        self._annotation = annotation
-        self._meta = meta or dict()
-        self._scaler: Optional[np.ndarray] = None
-        self.use_ground_truth_as_annotations = use_ground_truth_as_annotations
-        self._panel = panel
-        self.data_loading_strategy = data_loading_strategy
-        self._annotation = Annotation(image=full_annotation_image)
 
 
     @property
     def data(self) -> np.ndarray:
-        if self.use_cache:
+        if self.load_in_memory:
             if self._data is None:
                 self._data = self._read()
             return self._data
         return self._read()
+
+    def load_from_disk(self) -> None:
+        """
+        Loads data from disk into memory if the `load_in_memory` attribute is True.
+
+        Raises
+        ------
+        ValueError
+            If `load_in_memory` is False, indicating that loading data into memory
+            is not permitted.
+        """
+        if not self.load_in_memory:
+            raise ValueError("Cannot load from disk to memory if `load_in_memory` is False.")
+        if self._data is None:
+            self._data = self._read()
 
     @cached_property
     def dimensions(self) -> Tuple[int, int]:
@@ -89,13 +77,6 @@ class HIDImage(Image):
         """
         return self.data.shape[0], self.data.shape[1]
 
-    @property
-    def annotation(self):
-        return self._annotation
-
-    @property
-    def meta(self) -> MutableMapping[str, Any]:
-        return self._meta
 
     def _read(self) -> Optional[np.ndarray]:
         """
@@ -106,7 +87,7 @@ class HIDImage(Image):
             raise FileNotFoundError(str(self.path))
 
         # Parse the raw hid image into a numpy array.
-        if (profile := get_peak_data(self.path, self.data_loading_strategy, self.kit)) is None:
+        if (profile := get_peak_data(self.path)) is None:
             return None
 
 
@@ -124,33 +105,6 @@ class HIDImage(Image):
         )
         self._scaler = ss.scaler
 
-
-        called_alleles = None
-        # Determine the called alleles from the annotations file
-        if self.annotations_file and self._panel and \
-                (annotations_name := self.meta.get('annotations_name')):
-            called_alleles = parse_called_alleles(self.annotations_file,
-                                                  self._panel,
-                                                  annotations_name)
-
-        if called_alleles and self.annotation is None:
-            # Parse the called alleles into a segmentation
-            segmentation = self._get_segmentation(self.scaler, called_alleles, data.shape)
-            self._annotation = Annotation(image=segmentation) # where the annotation is ASSIGNED
-            self._meta['called_alleles'] = called_alleles
-
-        # But what if there is no annotations file, only genotype info?
-        # This is ofc hardcoded for the ProvedIt dataset for now
-        # TODO do not hardcode for ProvedIt
-        if self.use_ground_truth_as_annotations and self.annotation is None and self._panel:
-            try:
-                true_alleles = self.dataset_strategy.load_donor_alleles(self.path.stem)
-                segmentation = self._get_segmentation(self.scaler, true_alleles, data.shape)
-                self._annotation = Annotation(image=segmentation)
-                self._meta["called_alleles"] = true_alleles
-            except ValueError as e:
-                LOGGER.warning(f"Could not load true alleles for {self.path}: {e}")
-                # If we cannot load the true alleles, we do not set the annotation.
 
 
         if data is None:
@@ -236,51 +190,7 @@ class HIDImage(Image):
                 ] = 1
         return image
 
-    def adjust_annotations(self, adjustment_type: str = 'top') -> 'HIDImage':
-        """
-        Adjust the annotation of the image or the spu annotation in case of 'adjust_spu' is True.
-        If `adjustment_type` is 'top', (by default) we label the top of the peak, instead of the
-        entire bin. If the type is 'complete', we find the entire peak and label this.
-        Note that the original image annotations are overwritten.
-        """
-        profile = self.data  # force data to be read to generate annotations
-        annotations = self.annotation.image
-        if annotations is None:
-            LOGGER.warning(f"No annotations found for file {self.path} when "
-                           f"adjusting annotations.")
-            return self
 
-        for layer, dye in enumerate(profile):
-            # find indices of groups of positive annotations
-            _annotations, _ = np.where(annotations[layer] == 1)
-            if _annotations.size == 0:  # no annotation present in this dye
-                continue
-            annotation_groups = np.split(_annotations, np.where(np.diff(_annotations) != 1)[0] + 1)
-            for ann_group in annotation_groups:
-                annotations[layer, ann_group, 0] = 0.
-                peak_idx = find_peak_idx_near_or_in_range(dye, ann_group,
-                                                          self.THRESHOLD)
-
-                if peak_idx.size == 0:
-                    LOGGER.warning(f"No peak found above {self.THRESHOLD}rfu. "
-                                   f"Original annotation is removed "
-                                   "and no adjustment is applied "
-                                   f"({self.path}, dye {layer}, bin {ann_group}, "
-                                   f"rfus {dye[ann_group].flatten()}).")
-                else:
-                    if adjustment_type == 'complete':
-                        # find the boundary of the peak and annotate the range
-                        start, end = find_peak_boundary(dye, int(peak_idx),
-                                                        self.THRESHOLD)
-                        annotations[layer, np.arange(start, end + 1), 0] = 1.
-                    elif adjustment_type == 'top':
-                        # label only the top of the peak
-                        annotations[layer, peak_idx, 0] = 1.
-                    else:
-                        raise ValueError("Unknown adjustment type found: "
-                                         f"{adjustment_type}. Please provide"
-                                         " either `top` or `complete`.")
-        return self
 
     def __repr__(self):
         return f"HIDImage({self.path.name})"
@@ -299,11 +209,12 @@ class Ladder(HIDImage):
     def __init__(self,
                  path: PathLike,
                  default_panel: Panel,
-                 use_cache: bool = True):
+                 load_in_memory: bool = True,
+                 skip_if_invalid_internal_standard: bool = True):
         super().__init__(path=path,
-                         panel=default_panel,
                          include_size_standard=True,
-                         use_cache=use_cache)
+                         load_in_memory=load_in_memory,
+                         skip_if_invalid_internal_standard=skip_if_invalid_internal_standard)
         if Ladder._alleles_in_ladder is None:
             # load the alleles that should be present in every ladder
             Ladder._alleles_in_ladder = self.read_alleles_in_ladder()
@@ -319,7 +230,7 @@ class Ladder(HIDImage):
         return self._alleles_in_ladder
 
     @property
-    def panel(self) -> Panel:
+    def panel(self) -> Panel | None:
         return self._panel
 
     @staticmethod

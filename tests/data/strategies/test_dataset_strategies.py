@@ -89,7 +89,7 @@ def test_parse_nfi_rnd_annotations(read_annotation_heights, first_marker, ppf6c_
         annotation_mapping, sample_name
     )
 
-    assert annotation.annotation[1] == first_marker
+    assert annotation.data[1] == first_marker
 
 
 def test_parse_provedit_annotations(globalfiler_kit):
@@ -107,7 +107,7 @@ def test_parse_provedit_annotations(globalfiler_kit):
         annotation_mapping, sample_name
     )
 
-    assert annotation.annotation[0] == Marker(
+    assert annotation.data[0] == Marker(
         dye_row=0,
         name='D3S1358',
         alleles=[

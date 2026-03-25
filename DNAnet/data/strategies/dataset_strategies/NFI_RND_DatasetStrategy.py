@@ -15,7 +15,6 @@ from DNAnet.data.strategies.dataset_strategies.Abstract_DatasetStrategy import (
     FileCategory,
     DatasetStrategy,
 )
-from DNAnet.data.strategies.strategy_registry import StrategyRegistry
 from DNAnet.utils import (
     is_rd_hid_filename,
     get_prefix_from_filename,
@@ -192,7 +191,7 @@ class NFI_RND_DatasetStrategy(DatasetStrategy):
         Returns:
             AlleleAnnotation with a list of Markers for the provided sample
         """
-        return AlleleAnnotation(annotation=annotation_mapping[sample_name])
+        return AlleleAnnotation(data=annotation_mapping[sample_name])
 
     @classmethod
     def parse_annotation_file(cls, path: str | Path) -> Optional[Dict[str, List[Marker]]]:
@@ -208,6 +207,8 @@ class NFI_RND_DatasetStrategy(DatasetStrategy):
         if os.stat(path).st_size == 0:
             logger.debug(f'Found empty file: {path}')
             return None
+
+        from DNAnet.data.strategies.strategy_registry import StrategyRegistry
 
         scaling_strategy = StrategyRegistry.get_scaling_strategy()
 

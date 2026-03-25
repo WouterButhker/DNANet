@@ -1,27 +1,33 @@
+from __future__ import annotations
+
+import abc
 import contextlib
 import logging
 import os
 import shutil
 from abc import ABC, abstractmethod
 from collections import defaultdict
-from itertools import islice
 from pathlib import Path
-from typing import Dict, Iterator, List, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Union
 
 import mlflow
 import torch
 from torch import Tensor
+from torch.utils.data import DataLoader, Dataset
 from torch.utils.tensorboard import SummaryWriter
 from torchmetrics import Metric
 from tqdm import tqdm
 
 from DNAnet.allele_callers import NearestBasePairCaller
-from DNAnet.data.data_models.base import Image, InMemoryDataset
-from DNAnet.data.data_models.hid_dataset import HIDDataset
-from DNAnet.data.data_models.hid_image import HIDImage
-from DNAnet.models.prediction import Prediction
+from DNAnet.data.data_models.structs import ScanpointPrediction
 from DNAnet.typing import PathLike
-from DNAnet.utils import chunks
+
+if TYPE_CHECKING:
+    from DNAnet.data.data_models.base import Image
+    from DNAnet.data.data_models.dna_models import Panel
+    from DNAnet.data.data_models.hid_dataset import HIDDataset
+    from DNAnet.data.data_models.hid_image import HIDImage
+    from DNAnet.data.data_models.structs import AllelePrediction, Prediction, ScanpointAnnotation
 
 TORCH_DEFAULT_DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -61,12 +67,16 @@ class Model(ABC):
 class TrainableModel(Model, ABC):
 
     @abstractmethod
-    def fit(self, dataset: InMemoryDataset, **kwargs):
+    def fit(self, dataset: Dataset, **kwargs):
         """
         Fit the model on the dataset.
         """
         raise NotImplementedError
 
+class TransformData(abc.ABC):
+    @abstractmethod
+    def __call__(self, data: dict[str, Union[HIDImage, ScanpointAnnotation, Panel, None]]) -> dict[str, torch.Tensor]:
+        raise NotImplementedError
 
 
 class BaseModel(TrainableModel, ABC):
@@ -98,26 +108,17 @@ class BaseModel(TrainableModel, ABC):
         return self._model
 
     @abstractmethod
-    def get_input(self, image: HIDImage) -> torch.Tensor:
-        """
-        Returns the input tensor corresponding to the ``image`` for the
-        underlying PyTorch model.
-        """
+    def get_transform(self) -> TransformData:
         raise NotImplementedError
 
-    def get_inputs(self, images: Sequence[HIDImage]) -> torch.Tensor:
-        """
-        Get the input for multiple images as a tensor on the correct device
-        """
-        return torch.stack([self.get_input(image) for image in images]).to(self._device)
-
-    @abstractmethod
-    def get_targets(self,
-                    images: Sequence[HIDImage]) -> torch.Tensor:
-        """
-        Get the target for an image in the correct format
-        """
-        raise NotImplementedError
+    @staticmethod
+    def collate_fn(batch: List[dict]) -> dict:
+        return {
+            'input': torch.tensor([item['input'] for item in batch]),
+            'target': torch.tensor([item['target'] for item in batch]),
+            'adjusted_panel': [item['adjusted_panel'] for item in batch],
+            'scaler': torch.tensor([item['scaler'] for item in batch]),
+        }
 
 
     def fit(self,
@@ -134,6 +135,8 @@ class BaseModel(TrainableModel, ABC):
             checkpoint_dir: PathLike = None,
             save_best: bool = False,
             use_scheduler: bool = False,
+            shuffle: bool = False,
+            frac_use_data: Optional[float] = None,
             **kwargs):
         """
         Fits the model on training data.
@@ -224,17 +227,19 @@ class BaseModel(TrainableModel, ABC):
         # Used only if `save_best` is True.
         best_validation_loss = float('inf')
 
+        dataset.transform = self.get_transform()
+        train_dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, collate_fn=self.collate_fn)
+
+
         for epoch in range(num_epochs):
             # Clear the previous summary and start a new one for this epoch.
             summary: Dict[str, Dict[str, float]] = defaultdict(dict)
 
             descr = f"Epoch {epoch + 1}/{num_epochs}"
 
-            # Slice the training data in a number of batches
-            train_batches = chunks(dataset, batch_size)
-            train_batches = islice(train_batches, steps_per_epoch)
+
             # Train the model for a single epoch and compute the loss
-            training_loss = self.epoch(batches=train_batches,
+            training_loss = self.epoch(dataloader=train_dataloader,
                                        # Todo add possibility for balancer
                                        steps_per_epoch=steps_per_epoch,
                                        description=descr,
@@ -255,14 +260,16 @@ class BaseModel(TrainableModel, ABC):
             LOGGER.info(f"{descr} - Training loss: {training_loss:.6f}")
 
             if validation_set:
+                validation_set.transform = self.get_transform()
+                validation_dataloader = DataLoader(validation_set, batch_size=batch_size, shuffle=shuffle, collate_fn=self.collate_fn)
                 # If a validation set is specified, apply the model to it after
                 # each training epoch to keep track of a metric and the loss.
                 # TODO: now only first metric is taken as validation metric
                 validation_metric = self.compute_metric(metrics[0],
-                                                        validation_set,
+                                                        validation_dataloader,
                                                         batch_size)
                 validation_loss = self.compute_validation_loss(
-                    validation_set, batch_size, descr,
+                    validation_dataloader, descr,
                     steps_per_epoch_val, metrics)
                 LOGGER.info(f"{descr} - Validation metric ({metrics[0]}): "
                             f"{validation_metric:.6f} | Validation loss: "
@@ -340,13 +347,13 @@ class BaseModel(TrainableModel, ABC):
         LOGGER.info(f"{descr}: scheduler decreased learning rate to {new_lr}")
 
     def epoch(self,
-              batches: Iterator[Sequence[HIDImage]],
+              dataloader: DataLoader,
               steps_per_epoch: int,
               description: str,
               optimizer: Optional[torch.optim.Optimizer] = None,
               train: bool = True,
               metrics: Sequence[Metric] = None) -> float:
-        batches = tqdm(batches, desc=description, total=steps_per_epoch)
+        dataloader = tqdm(dataloader, desc=description, total=steps_per_epoch)
 
         # Depending on whether this is a training or validation epoch, put the
         # underlying PyTorch model in the proper mode (`train` or `eval`).
@@ -365,7 +372,7 @@ class BaseModel(TrainableModel, ABC):
 
         epoch_loss = 0.
         with context:
-            for step, batch in enumerate(batches):
+            for step, batch in enumerate(dataloader):
                 loss = self.step(batch, metrics)
                 if train:
                     loss.backward()
@@ -377,17 +384,20 @@ class BaseModel(TrainableModel, ABC):
 
                 # If `batches` is actually a `tqdm` progress bar, update the
                 # loss after each batch.
-                if isinstance(batches, tqdm):
+                if isinstance(dataloader, tqdm):
                     name = 'training' if train else 'validation'
-                    batches.set_postfix({name + '_loss': epoch_loss})
+                    dataloader.set_postfix({name + '_loss': epoch_loss})
 
         return epoch_loss
 
     def step(self,
-             batch: Sequence[HIDImage],
+             batch: dict[str, Any],
              metrics: Optional[Sequence[Metric]]) -> torch.Tensor:
-        inputs = self.get_inputs(batch)
-        y_true = self.get_targets(batch)
+
+        # do not pass targets as part of the input
+        inputs = {key: val for key, val in batch.items() if key != 'target'}
+        y_true = batch['target']
+
 
         logits = self._model(inputs)
 
@@ -397,10 +407,13 @@ class BaseModel(TrainableModel, ABC):
 
         return self.loss_fn(logits, y_true)
 
-    def predict(self, image: HIDImage) -> Prediction:
-        return self.predict_batch([image])[0]
+    def predict(self, data: dict[str, torch.Tensor]) -> Prediction:
+        batch = {
+            'input': data['input'].unsqueeze(0)
+        }
+        return self.predict_batch(batch)[0]
 
-    def predict_batch(self, batch: Sequence[HIDImage]) -> List[Prediction]:
+    def predict_batch(self, batch: dict) -> List[AllelePrediction]:
         self._model.eval()
 
         with torch.no_grad():
@@ -408,14 +421,13 @@ class BaseModel(TrainableModel, ABC):
 
         predictions = self.create_predictions(y_pred, batch)
 
-        if self.allele_caller:
-            LOGGER.info("Calling alleles from predicted segmentation...")
-            predictions = [self.allele_caller.call_alleles(im, pred) for im, pred in
-                           zip(batch, predictions)]
+        if self.allele_caller and isinstance(predictions[0], ScanpointPrediction):
+            LOGGER.info("Calling alleles from predicted ScanpointPredictions...")
+            predictions = self.allele_caller.call_alleles_batch(batch, predictions)
         return predictions
 
     @abstractmethod
-    def create_predictions(self, logits: torch.Tensor, batch: Sequence[HIDImage]) -> List[Prediction]:
+    def create_predictions(self, logits: torch.Tensor, batch: dict) -> List[Prediction]:
         """
         Create `Prediction` instances from the raw output of the model.
          This allows for flexibility in how the raw output is post-processed
@@ -426,12 +438,12 @@ class BaseModel(TrainableModel, ABC):
         """
         raise NotImplementedError
 
-    def predict_raw(self, images: Sequence[HIDImage]) -> torch.Tensor:
+    def predict_raw(self, batch: dict[str, torch.Tensor]) -> torch.Tensor:
         """
         Takes a batch of `images` and returns the raw predictions as output
         directly by the underlying model.
         """
-        return self._model(self.get_inputs(images))
+        return self._model(batch['input'])
 
 
     @abstractmethod
@@ -451,31 +463,31 @@ class BaseModel(TrainableModel, ABC):
 
     def compute_metric(self,
                        metric: Metric,
-                       dataset: HIDDataset,
+                       dataloader: DataLoader,
                        batch_size: int) -> float:
         """
         Compute a value for a provided TorchMetric and dataset.
         """
         metric.reset()
-        batches = chunks(dataset, batch_size)
 
-        for batch in batches:
-            y_true = self.get_targets(batch)
-            inputs = self.get_inputs(batch)
+
+        for batch in dataloader:
+            y_true = batch['target']
+            inputs = batch['input']
             logits = self._model(inputs)
             self.update_metric(metric, logits, y_true)
         return metric.compute()
 
     def compute_validation_loss(self,
-                                validation_set: HIDDataset,
-                                batch_size: int, description: str,
+                                val_dataloader: DataLoader,
+                                description: str,
                                 steps_per_epoch: int,
                                 metrics: Sequence[Metric]) -> float:
         """
         Compute the loss for the validation set.
         """
-        validation_batches = chunks(validation_set, batch_size)
-        return self.epoch(validation_batches, steps_per_epoch=steps_per_epoch,
+
+        return self.epoch(val_dataloader, steps_per_epoch=steps_per_epoch,
                           description=description, train=False,
                           metrics=metrics)
 

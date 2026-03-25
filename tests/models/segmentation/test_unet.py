@@ -28,7 +28,7 @@ def test_dnanet_unet_multiclass(hid_dataset_rd):
     multiclass_images = []
     for image in hid_dataset_rd:
         multiclass_image = deepcopy(image)
-        annotation = multiclass_image.annotation.image.astype("int64").squeeze(-1)
+        annotation = multiclass_image.data.image.astype("int64").squeeze(-1)
         annotation[:, 100:200] = 2
         multiclass_image._annotation = Annotation(image=annotation)
         multiclass_images.append(multiclass_image)

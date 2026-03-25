@@ -1,13 +1,15 @@
 from typing import Sequence
 
 from DNAnet.data.data_models.hid_image import HIDImage
-from DNAnet.models.prediction import Prediction
+
 import numpy as np
+
+from DNAnet.data.data_models.structs import ScanpointPrediction
 
 
 def reconstruction_mse(
         images: Sequence[HIDImage],
-        predictions: Sequence[Prediction],
+        predictions: Sequence[ScanpointPrediction],
 ) -> float:
     """
     Computes the mean squared error (MSE) for image reconstructions.
@@ -26,7 +28,7 @@ def reconstruction_mse(
     if len(predictions) == 0:
         return 0.0
     for image, prediction in zip(images, predictions):
-        replicated_signal = prediction.image.squeeze()
+        replicated_signal = prediction.data.squeeze()
         true_signal = image.data.squeeze()
         mse = np.mean((replicated_signal - true_signal) ** 2)
         total_mse += mse

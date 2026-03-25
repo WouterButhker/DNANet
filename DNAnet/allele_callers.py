@@ -1,13 +1,13 @@
 import logging
 from abc import ABC, abstractmethod
 from collections import defaultdict, namedtuple
-from typing import List, Tuple
+from typing import List, Tuple, Any
 
 import numpy as np
+import torch
 
-from DNAnet.data.data_models import Allele, Marker, Panel
-from DNAnet.data.data_models.hid_image import HIDImage
-from DNAnet.models.prediction import Prediction
+from DNAnet.data.data_models.dna_models import Panel, Marker, Allele
+from DNAnet.data.data_models.structs import ScanpointPrediction, AllelePrediction
 
 LOGGER = logging.getLogger('dnanet')
 
@@ -21,18 +21,22 @@ class AlleleCaller(ABC):
     Base class for an object that can call alleles from the predicted segmentation image.
     """
 
+    @classmethod
     @abstractmethod
-    def call_alleles(self,
-                     image: HIDImage,
-                     prediction: Prediction) -> Prediction:
+    def call_alleles_batch(cls,
+                           data: dict[str, Any],
+                           predictions: List[ScanpointPrediction]) -> List[AllelePrediction]:
         raise NotImplementedError
 
+    @classmethod
     @abstractmethod
-    def translate_pixels_to_alleles(self,
-                                    scaler: np.ndarray,
-                                    prediction: np.ndarray,
-                                    image: np.ndarray,
-                                    panel: Panel) -> List[Marker]:
+    def translate_pixels_to_alleles(
+            cls,
+            scaler: torch.Tensor,
+            prediction: ScanpointPrediction,
+            image: torch.Tensor,
+            panel: Panel
+    ) -> List[Marker]:
         raise NotImplementedError
 
 
@@ -42,123 +46,29 @@ class NearestBasePairCaller(AlleleCaller):
     pair location of a predicted bin with the mean base pair of an allele from the panel.
     """
 
-    def call_alleles(self,
-                     image: HIDImage,
-                     prediction: Prediction) -> Prediction:
-        called_alleles = self.translate_pixels_to_alleles(
-            image._scaler[np.newaxis, :],
-            prediction.image,
-            image.data,
-            image._panel
-        )
+    @classmethod
+    def call_alleles_batch(cls,
+                           data: dict[str, Any],
+                           predictions: List[ScanpointPrediction]) -> List[AllelePrediction]:
+        adjusted_panels: List[Panel] = data['adjusted_panel'] # (B)
+        scalers: torch.Tensor = data['scaler'] # (B, N)
+        images: torch.Tensor = data['input'] # (B, C, N)
 
-        if 'called_alleles_manual' in image.meta:
-            # in this case we are working on ground truth annotations, remove DYS and AMEL
-            # from the prediction as these markers are not present in the annotations
-            prediction.called_alleles = \
-                [m for m in called_alleles if m.name not in NON_AUTOSOMAL_MARKERS]
-        else:
-            prediction.called_alleles = called_alleles
-        return prediction
+        allele_predictions = []
+        for prediction, adjusted_panel, scaler, image in zip(predictions, adjusted_panels, scalers, images):
+            allele_predictions.append(cls.translate_pixels_to_alleles(scaler=scaler, prediction=prediction, image=image, panel=adjusted_panel))
 
-    def call_alleles_from_scan_points_annotations(self,
-                                                  image: HIDImage,
-                                                  annotations: List[scan_point_annotation],
-                                                  aggregate: bool=True,
-                                                  warn_for_multiple_peaks=False) -> List[
-        Marker]:
-        """
-        Calls alleles from annotations as provided by the annotation tool.
-        If aggregate, only provides every allele once, with rfu = max rfu.
-        Else, can provide the same allele multiple times, e.g. from different annotators.
-
-        stores start and end of annotation in left and right bin of the allele
-        gives a warning if warn_for_multiple_peaks and multiple local maxima are found in an
-        annotated region.
-        """
-        scaler = image._scaler[np.newaxis, :]
-        loci_dict = defaultdict(list)
-        rfus = defaultdict(int)
-        left = defaultdict(int)
-        right = defaultdict(int)
-        for annotation in annotations:
-            rfu_of_annotation = image.data[annotation.dye_index, max(annotation.start,0):annotation.end+1]
-            top_bp = np.argmax(rfu_of_annotation) + annotation.start
-            max_rfu = int(max(rfu_of_annotation))
-
-            # find the bin closest to the top rfu in the annotation
-            # not to the whole annotation range, as the long slopes of a peak can also be annotated
-            allele_name, marker_name = self.get_marker_and_allele_from_bin(annotation.dye_index,
-                                                                           image._panel,
-                                                                           top_bp,
-                                                                           scaler)
-
-            if warn_for_multiple_peaks:
-                from scipy.signal import find_peaks
-
-                # find all peaks of at least certain RFU, whose distance to the next bottom is
-                # at least prominence, and who are distance apart
-                peaks, _ = find_peaks(rfu_of_annotation.squeeze(),
-                                      height=50,
-                                      prominence=20,
-                                      distance=5,
-                                      width=5)
-                if len(peaks)>1:
-                    print('found multiple peaks for ', image.path.stem, marker_name, allele_name, rfu_of_annotation.squeeze()[peaks], _)
-
-            if aggregate:
-                loci_dict[(annotation.dye_index, marker_name)].append(allele_name)
-                # save highest rfu found for this allele (alleles may be found several times)
-                rfus[(marker_name, allele_name)] = int(max(
-                    rfus[(marker_name, allele_name)],
-                    max_rfu
-                ))
-                left[(marker_name, allele_name)] = float(min(
-                    left[(marker_name, allele_name)],
-                    annotation.start
-                ))
-                right[(marker_name, allele_name)] = float(max(
-                    right[(marker_name, allele_name)],
-                    annotation.end
-                ))
-            if not aggregate:
-                allele = Allele(name=allele_name, height=max_rfu,
-                                left_bin=float(scaler[:, annotation.start]),
-                                right_bin=float(scaler[:, annotation.end]))
-                loci_dict[(annotation.dye_index, marker_name)].append(allele)
+        return allele_predictions
 
 
-        if aggregate:
-            return [
-                Marker(
-                    dye_index,
-                    marker_name,
-                    alleles=[
-                        Allele(name=allele_name,
-                               height=rfus[(marker_name, allele_name)],
-                               left_bin=scaler[:, left[(marker_name, allele_name)]],
-                               right_bin=scaler[:, right[(marker_name, allele_name)]],
-                               )
-                        for allele_name in set(alleles)
-                    ],
-                )
-                for (dye_index, marker_name), alleles in loci_dict.items()
-            ]
-        else:
-            return [
-                Marker(
-                    dye_index,
-                    marker_name,
-                    alleles=alleles,
-                )
-                for (dye_index, marker_name), alleles in loci_dict.items()
-            ]
 
+
+    @classmethod
     def translate_pixels_to_alleles(
-            self,
-            scaler: np.ndarray,
-            prediction_image: np.ndarray,
-            image: np.ndarray,
+            cls,
+            scaler: torch.Tensor,
+            prediction: ScanpointPrediction,
+            image: torch.Tensor,
             panel: Panel
     ) -> List[Marker]:
         """
@@ -167,6 +77,10 @@ class NearestBasePairCaller(AlleleCaller):
         group using the `scaler`. Then find the allele name corresponding to
         the base pair that is closest to the mean predicted base pair via the panel.
         """
+        scaler = scaler.numpy()
+        prediction_image = prediction.data
+        image = image.numpy()
+
         loci_dict = defaultdict(set)
         rfus = defaultdict(int)
         for dye_index, dye in enumerate(prediction_image):
@@ -181,9 +95,9 @@ class NearestBasePairCaller(AlleleCaller):
             predicted_bins = np.split(positives, np.where(np.diff(positives) != 1)[0] + 1)
             for prediction_bin in predicted_bins:
                 # get the mean basepair of the bin via its pixel values and the scaler
-                allele_name, marker_name = self.get_marker_and_allele_from_bin(dye_index, panel,
-                                                                               prediction_bin,
-                                                                               scaler)
+                allele_name, marker_name = cls.get_marker_and_allele_from_bin(dye_index, panel,
+                                                                              prediction_bin,
+                                                                              scaler)
                 loci_dict[(dye_index, marker_name)].add(allele_name)
                 # save highest rfu found for this allele (alleles may be found several times)
                 max_rfu = max(image[dye_index, prediction_bin])
@@ -204,9 +118,10 @@ class NearestBasePairCaller(AlleleCaller):
             for (dye_index, marker_name), alleles in loci_dict.items()
         ]
 
-    def get_marker_and_allele_from_bin(self, dye_index, panel, prediction_bin, scaler):
+    @classmethod
+    def get_marker_and_allele_from_bin(cls, dye_index, panel, prediction_bin, scaler):
         mean_bp = np.mean(scaler[:, prediction_bin])
-        marker_name, allele_name = self.get_allele_by_nearest_bp(dye_index, mean_bp, panel)
+        marker_name, allele_name = cls.get_allele_by_nearest_bp(dye_index, mean_bp, panel)
         return allele_name, marker_name
 
     @staticmethod

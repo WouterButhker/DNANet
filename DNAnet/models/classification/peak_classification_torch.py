@@ -1,5 +1,5 @@
 import abc
-from typing import Tuple, List
+from typing import Tuple, List, Any
 
 import torch
 from torch import nn
@@ -16,15 +16,15 @@ class BackboneModule(nn.Module, abc.ABC):
         raise NotImplementedError()
 
     @abc.abstractmethod
-    def backbone(self, x) -> torch.Tensor:
+    def backbone(self, batch: dict[str, Any]) -> torch.Tensor:
         raise NotImplementedError()
 
     @abc.abstractmethod
     def backbone_out_shape(self) -> Tuple[int, ...]:
         raise NotImplementedError()
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        features = self.backbone(x)
+    def forward(self, batch: dict[str, Any]) -> torch.Tensor:
+        features = self.backbone(batch)
         return self.head(features)
 
 
@@ -167,8 +167,9 @@ class PeakClassificationModel(BackboneModule):
         return (x * weights.unsqueeze(1)).sum(dim=-1)            # (B, C)
 
     # ---- forward ----
-    def backbone(self, x: Tuple[torch.Tensor, torch.Tensor]) -> torch.Tensor:
-        x, marker_idx = x
+    def backbone(self, batch: dict[str, Any]) -> torch.Tensor:
+        x = batch['peak']
+        marker_idx = batch['marker_idx']
         # x shape : (B, C_in, W)
         # marker_idx shape : (B,)
 
@@ -189,7 +190,7 @@ class PeakClassificationModel(BackboneModule):
 
         return x
 
-    def head(self, x: Tuple[torch.Tensor, torch.Tensor]) -> torch.Tensor:
+    def head(self, x: torch.Tensor) -> torch.Tensor:
         return self._head(x)  # (B, num_classes)
 
     def backbone_out_shape(self) -> Tuple[int, ...]:

@@ -7,7 +7,7 @@ from DNAnet.data.data_models import Panel
 def test_translator_general(hid_image_with_ladder, ladder):
     allele_caller = NearestBasePairCaller()
     predicted_alleles = allele_caller.translate_pixels_to_alleles(hid_image_with_ladder.scaler,
-                                                                  hid_image_with_ladder.annotation.image,
+                                                                  hid_image_with_ladder.data.image,
                                                                   hid_image_with_ladder.data,
                                                                   hid_image_with_ladder._panel)
     called_alleles = hid_image_with_ladder.meta['called_alleles']
@@ -44,7 +44,7 @@ def test_translator_with_and_without_ladder(hid_image_with_ladder):
     allele_caller = NearestBasePairCaller()
     default_panel = Panel(pytest.PANEL_PATH)
     scaler, prediction_image, image, panel = hid_image_with_ladder.scaler, \
-        hid_image_with_ladder.annotation.image, \
+        hid_image_with_ladder.data.image, \
         hid_image_with_ladder.data, \
         hid_image_with_ladder._panel
     predicted_alleles = allele_caller.translate_pixels_to_alleles(

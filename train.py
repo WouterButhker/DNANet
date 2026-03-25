@@ -5,7 +5,9 @@ from datetime import datetime
 from typing import Optional, Union
 
 import mlflow
+import torch
 
+from DNAnet.data.strategies.strategy_registry import StrategyRegistry
 from config_io import dump_config, load_config, load_dataset, load_model, load_training_config
 from DNAnet.models.base_model import TrainableModel
 from utils import add_file_handler_to_logger, prepare_output_file
@@ -51,11 +53,15 @@ def run(data_config: str,
     else:
         LOGGER.info("Will start training from scratch")
 
+
+
     LOGGER.info("Loading dataset...")
     dataset = load_dataset(data_config)
+    dataset_strategy = StrategyRegistry.get_dataset()
     if split:
         LOGGER.info(f"Splitting dataset, using {split * 100}% for training")
-        dataset, _ = dataset.split(split, seed=seed)
+
+        dataset, _ = dataset_strategy.split_dataset(dataset, split_frac=split, seed=seed)[0]
 
     validation_set = None
     if validation_config:
@@ -63,7 +69,7 @@ def run(data_config: str,
             validation_config = float(validation_config)
             LOGGER.info(f"Validation split found, using {validation_config * 100}% to create a "
                         f"validation set...")
-            dataset, validation_set = dataset.split(1 - validation_config)
+            dataset, validation_set = dataset_strategy.split_dataset(dataset, split_frac=validation_config, seed=seed)[0]
         except ValueError:
             LOGGER.info("Validation config found, loading validation set...")
             validation_set = load_dataset(validation_config)

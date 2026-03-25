@@ -1,8 +1,8 @@
 from typing import Optional, Sequence
 
 from DNAnet.data.data_models.base import Image
+from DNAnet.data.data_models.structs import Prediction
 from DNAnet.evaluation.utils import flatten_marker_list_to_locusallelename_list
-from DNAnet.models.prediction import Prediction
 
 
 def allele_precision(

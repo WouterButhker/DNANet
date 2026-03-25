@@ -6,9 +6,8 @@ from typing import Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 
-from DNAnet.data.data_models import Allele, Marker, Panel
+from DNAnet.data.data_models.dna_models import Allele, Marker, Panel
 from DNAnet.data.data_models.structs import AlleleAnnotation, ScanpointAnnotation
-from DNAnet.data.strategies.strategy_registry import StrategyRegistry
 from DNAnet.typing import PathLike
 
 

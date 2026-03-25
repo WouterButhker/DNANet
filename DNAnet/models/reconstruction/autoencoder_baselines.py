@@ -1,4 +1,4 @@
-from typing import Tuple, Optional
+from typing import Tuple, Any
 
 import torch
 
@@ -37,11 +37,12 @@ class FourierAutoEncoder(AbstractAutoEncoder):
         self.latent_coeffs = latent_coeffs
         self.norm = norm
 
-    def encoder(self, x: torch.Tensor) -> torch.Tensor:
+    def encoder(self, batch: dict[str, Any]) -> torch.Tensor:
         """
         x: (batch, in_channels, signal_length), real-valued
         returns: (batch, in_channels, latent_coeffs, 2) with real/imag parts
         """
+        x = batch['input']
         # Ensure correct shape
         if x.dim() == 4 and x.shape[-1] == 1:
             x = x.squeeze(-1)

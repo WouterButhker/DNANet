@@ -1,11 +1,8 @@
-from typing import List, Tuple
+from typing import List
 
 import numpy as np
 import torch
 from torch import nn
-
-from DNAnet.models.classification.peak_classification_torch import BackboneModule
-from DNAnet.models.reconstruction.autoencoder_architectures import AbstractAutoEncoder
 
 
 class CombinedClassifier(nn.Module):
@@ -67,12 +64,12 @@ class CombinedClassifier(nn.Module):
             raise ValueError(f"Unknown combiner strategy: {combiner_strategy}")
 
 
-    def forward(self, x: Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]) -> torch.Tensor:
+    def forward(self, batch: dict[str, torch.Tensor]) -> torch.Tensor:
         """
         Forward pass of the combined classifier.
         Args:
-            x: Tuple containing:
-                - full_image: Tensor of shape (N, C, 4096)
+            batch: dict containing:
+                - image: Tensor of shape (N, C, 4096)
                 - peak_windows: NestedTensor of shape (N, N_p, C, W)
                 - marker_idxs: NestedTensor of shape (N, N_p)
                 - peak_centers: NestedTensor of shape (N, N_p, 2)
@@ -90,7 +87,10 @@ class CombinedClassifier(nn.Module):
         # F_a: Dimension of autoencoder features (when flattened)
         # F_p: Dimension of peak classifier features (when flattened)
 
-        full_image, peak_windows, marker_idxs, peak_centers = x
+        full_image = batch['image']
+        peak_windows = batch['peak_windows']
+        marker_idxs = batch['marker_idxs']
+        peak_centers = batch['peak_centers']
         # full_image: (N, C, L)
         # peak_windows: (N, N_p, C, W)
         # marker_idxs: (N, N_p)
@@ -108,14 +108,14 @@ class CombinedClassifier(nn.Module):
         image_indices = torch.arange(num_images, dtype=torch.long, device=peaks.device)  # (N,)
         peak_to_image = torch.repeat_interleave(image_indices, lengths) # (P,) mapping each peak index to its source image
 
-
+        autoencoder_input = {'input': full_image}
         # 1) GLOBAL BRANCH (per image)
         # full_images:  (N, C, L)
         if self.freeze_autoencoder:
             with torch.no_grad():
-                autoencoder_out = self.autoencoder.encoder(full_image) # Output can be any shape
+                autoencoder_out = self.autoencoder.encoder(autoencoder_input) # Output can be any shape
         else:
-            autoencoder_out = self.autoencoder.encoder(full_image) # Output can be any shape
+            autoencoder_out = self.autoencoder.encoder(autoencoder_input) # Output can be any shape
 
         # global_encoded_shape = self.autoencoder.encoded_shape() # Output can be any shape
         # print(f"Shape of autoencoder_out: {global_encoded_shape}")
@@ -129,7 +129,8 @@ class CombinedClassifier(nn.Module):
         # 2) LOCAL BRANCH (per peak)
         # peaks:   (P, C, W)
         # markers: (P,)
-        local_features = self.peak_classifier.backbone((peaks, markers)) # (P, F_p)
+        peak_classifier_input = {'peak': peaks, 'marker_idx': markers}
+        local_features = self.peak_classifier.backbone(peak_classifier_input) # (P, F_p)
         # print(f"Local features shape: {local_features.shape}")
 
         # 3) COMBINE + CLASSIFY (per peak)
@@ -190,7 +191,7 @@ class PeakOnlyClassifier(nn.Module):
         self.num_classes = num_classes
         self.default_class_idx = default_class
 
-    def forward(self, x: Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]) -> torch.Tensor:
+    def forward(self, batch: dict[str, torch.Tensor]) -> torch.Tensor:
         ### DEFINITION OF DIMENSIONS:
         # N: Number of images in batch
         # C: Number of channels/dyes
@@ -201,7 +202,10 @@ class PeakOnlyClassifier(nn.Module):
         # F_a: Dimension of autoencoder features (when flattened)
         # F_p: Dimension of peak classifier features (when flattened)
         # TODO: reduce duplicated code from CombinedClassifier
-        full_image, peak_windows, marker_idxs, peak_centers = x
+        full_image = batch['image']
+        peak_windows = batch['peak_windows']
+        marker_idxs = batch['marker_idxs']
+        peak_centers = batch['peak_centers']
 
         # peak_windows: (N, N_p, C, W)
         # marker_idxs: (N, N_p)

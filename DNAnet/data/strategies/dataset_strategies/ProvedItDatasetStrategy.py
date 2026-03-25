@@ -1,14 +1,13 @@
 import re
-from typing import Dict, List, Tuple, Mapping, Sequence
-from pathlib import Path
-from itertools import chain
 from collections import defaultdict
+from itertools import chain
+from pathlib import Path
+from typing import Dict, List, Tuple
 
 import openpyxl
 
-from DNAnet.data.data_models.structs import AlleleAnnotation
 from DNAnet.data.data_models.dna_models import Marker
-from DNAnet.data.strategies.strategy_registry import StrategyRegistry
+from DNAnet.data.data_models.structs import AlleleAnnotation
 from DNAnet.data.strategies.dataset_strategies.Abstract_DatasetStrategy import (
     FileCategory,
     DatasetStrategy,
@@ -184,4 +183,4 @@ class ProvedItDatasetStrategy(DatasetStrategy):
         """
         sample_ids = cls.get_contributors(sample_name)
         sample_markers = [annotation_mapping[sample] for sample in sample_ids]
-        return AlleleAnnotation(annotation=sample_markers)  # type: ignore
+        return AlleleAnnotation(data=sample_markers)  # type: ignore

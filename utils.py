@@ -4,7 +4,6 @@ import logging
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Sequence
 
-from DNAnet.models.prediction import Prediction
 from DNAnet.typing import PathLike
 
 
@@ -33,7 +32,7 @@ def prepare_output_file(path: str) -> str:
     return path
 
 
-def save_predictions(predictions: Sequence[Prediction], filename: PathLike):
+def save_predictions(predictions: Sequence[Any], filename: PathLike):
     """
     Serialize a list of Prediction objects to JSON file
     """
@@ -42,13 +41,12 @@ def save_predictions(predictions: Sequence[Prediction], filename: PathLike):
         json.dump(predictions_dicts, f)
 
 
-def load_predictions(filename: PathLike) -> Sequence[Prediction]:
+def load_predictions(filename: PathLike) -> Sequence[dict[str, Any]]:
     """
     Deserialize a list of Prediction objects from JSON file
     """
     with open(filename, 'r') as f:
-        data = json.load(f)
-    return [Prediction.from_dict(item) for item in data]
+        return json.load(f)
 
 
 def get_defaults(func: Callable) -> Dict[str, Any]:

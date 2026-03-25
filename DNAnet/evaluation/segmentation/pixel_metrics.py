@@ -3,12 +3,13 @@ from typing import Sequence
 import numpy as np
 
 from DNAnet.data.data_models.base import Image
-from DNAnet.models.prediction import Prediction
+from DNAnet.data.data_models.structs import ScanpointPrediction
 
+# TODO fix metrics
 
 def pixel_precision(
         images: Sequence[Image],
-        predictions: Sequence[Prediction],
+        predictions: Sequence[ScanpointPrediction],
 ) -> float:
     true_positives = 0
     false_positives = 0
@@ -24,7 +25,7 @@ def pixel_precision(
 
 def pixel_recall(
         images: Sequence[Image],
-        predictions: Sequence[Prediction],
+        predictions: Sequence[ScanpointPrediction],
 ) -> float:
     true_positives = 0
     false_negatives = 0
@@ -40,7 +41,7 @@ def pixel_recall(
 
 def pixel_f1_score(
         images: Sequence[Image],
-        predictions: Sequence[Prediction]
+        predictions: Sequence[ScanpointPrediction]
 ) -> float:
     p = pixel_precision(images, predictions)
     r = pixel_recall(images, predictions)
@@ -49,7 +50,7 @@ def pixel_f1_score(
 
 def average_binary_iou(
         images: Sequence[Image],
-        predictions: Sequence[Prediction],
+        predictions: Sequence[ScanpointPrediction],
         threshold: float = 0.5,
 ) -> float:
     """

@@ -36,6 +36,100 @@ from DNAnet.evaluation.visualizations import DNA_CHANNELS
 CATEGORIES = ["", "Allele", "Stutter", "PullUp", "BleedThrough", "Spike", "DyeBlob", "Artefact",
               "Unclear", "Shoulder", "ForeignDNA", "OverloadingArtifact"]
 
+## moved from allele_callers.py FIXME
+def call_alleles_from_scan_points_annotations(self,
+                                              image: HIDImage,
+                                              annotations: List[scan_point_annotation],
+                                              aggregate: bool=True,
+                                              warn_for_multiple_peaks=False) -> List[
+    Marker]:
+    """
+    Calls alleles from annotations as provided by the annotation tool.
+    If aggregate, only provides every allele once, with rfu = max rfu.
+    Else, can provide the same allele multiple times, e.g. from different annotators.
+
+    stores start and end of annotation in left and right bin of the allele
+    gives a warning if warn_for_multiple_peaks and multiple local maxima are found in an
+    annotated region.
+    """
+    scaler = image._scaler[np.newaxis, :]
+    loci_dict = defaultdict(list)
+    rfus = defaultdict(int)
+    left = defaultdict(int)
+    right = defaultdict(int)
+    for annotation in annotations:
+        rfu_of_annotation = image.data[annotation.dye_index, max(annotation.start,0):annotation.end+1]
+        top_bp = np.argmax(rfu_of_annotation) + annotation.start
+        max_rfu = int(max(rfu_of_annotation))
+
+        # find the bin closest to the top rfu in the annotation
+        # not to the whole annotation range, as the long slopes of a peak can also be annotated
+        allele_name, marker_name = self.get_marker_and_allele_from_bin(annotation.dye_index,
+                                                                       image._panel,
+                                                                       top_bp,
+                                                                       scaler)
+
+        if warn_for_multiple_peaks:
+            from scipy.signal import find_peaks
+
+            # find all peaks of at least certain RFU, whose distance to the next bottom is
+            # at least prominence, and who are distance apart
+            peaks, _ = find_peaks(rfu_of_annotation.squeeze(),
+                                  height=50,
+                                  prominence=20,
+                                  distance=5,
+                                  width=5)
+            if len(peaks)>1:
+                print('found multiple peaks for ', image.path.stem, marker_name, allele_name, rfu_of_annotation.squeeze()[peaks], _)
+
+        if aggregate:
+            loci_dict[(annotation.dye_index, marker_name)].append(allele_name)
+            # save highest rfu found for this allele (alleles may be found several times)
+            rfus[(marker_name, allele_name)] = int(max(
+                rfus[(marker_name, allele_name)],
+                max_rfu
+            ))
+            left[(marker_name, allele_name)] = float(min(
+                left[(marker_name, allele_name)],
+                annotation.start
+            ))
+            right[(marker_name, allele_name)] = float(max(
+                right[(marker_name, allele_name)],
+                annotation.end
+            ))
+        if not aggregate:
+            allele = Allele(name=allele_name, height=max_rfu,
+                            left_bin=float(scaler[:, annotation.start]),
+                            right_bin=float(scaler[:, annotation.end]))
+            loci_dict[(annotation.dye_index, marker_name)].append(allele)
+
+
+    if aggregate:
+        return [
+            Marker(
+                dye_index,
+                marker_name,
+                alleles=[
+                    Allele(name=allele_name,
+                           height=rfus[(marker_name, allele_name)],
+                           left_bin=scaler[:, left[(marker_name, allele_name)]],
+                           right_bin=scaler[:, right[(marker_name, allele_name)]],
+                           )
+                    for allele_name in set(alleles)
+                ],
+            )
+            for (dye_index, marker_name), alleles in loci_dict.items()
+        ]
+    else:
+        return [
+            Marker(
+                dye_index,
+                marker_name,
+                alleles=alleles,
+            )
+            for (dye_index, marker_name), alleles in loci_dict.items()
+        ]
+
 
 def parse_csv_file(csv_file: str):
     parsed_lines = []

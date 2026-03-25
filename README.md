@@ -348,6 +348,7 @@ individualize_genotypes(
 )
 ```
 3. Instantiate the reusable kit/strategy objects and load the dataset:
+
 ```python
 from pathlib import Path
 from DNAnet.data.data_models import Panel
@@ -365,7 +366,7 @@ scaling_strategy = ProvedItEPGScalingStrategy(kit=GLOBALFILER_KIT)
 
 provedit = HIDDataset(
     root="/path/to/PROVEDIt_2-5-Person Profiles_3500 5sec_GF29cycles",
-    panel=GLOBALFILER_KIT.panel_path,
+    panel_path=GLOBALFILER_KIT.panel_path,
     ground_truth_as_annotations=True,  # use contributor genotypes as annotations
     dataset_strategy=dataset_strategy,
     scaling_strategy=scaling_strategy,

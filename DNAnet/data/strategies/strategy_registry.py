@@ -1,6 +1,8 @@
 from __future__ import annotations
+
 from typing import TYPE_CHECKING
 
+from DNAnet.data.strategies.dataset_strategies import ProvedItDatasetStrategy, NFI_RND_DatasetStrategy
 from DNAnet.data.strategies.kit_strategies.scaling_strategy import ScalingStrategy, ScalingStrategyOptions, \
     get_scaling_strategy
 
@@ -35,8 +37,24 @@ class StrategyRegistry:
             raise TypeError(f"Expected ScalingStrategy or str, got {type(strategy)}")
 
     @classmethod
-    def configure_dataset(cls, strategy: DatasetStrategy):
-        cls._dataset_strategy = strategy
+    def configure_dataset(cls, strategy: DatasetStrategy | str, **kwargs):
+        if isinstance(strategy, DatasetStrategy):
+            cls._dataset_strategy = strategy
+        elif isinstance(strategy, str):
+            # TODO: use same implementation as configure_kit
+            dataset_strategies = {
+                "ProvedIt": ProvedItDatasetStrategy,
+                "NFI_RND": NFI_RND_DatasetStrategy,
+
+            }
+            if strategy not in dataset_strategies:
+                raise ValueError(
+                    f"Unknown dataset strategy: '{strategy}'. Valid: {list(dataset_strategies.keys())}"
+                )
+
+            cls._dataset_strategy = dataset_strategies[strategy](**kwargs)
+        else:
+            raise TypeError(f"Expected DatasetStrategy or str, got {type(strategy)}")
 
     # --- get ---
 

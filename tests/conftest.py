@@ -38,7 +38,7 @@ def ppf6c_kit():
 def hid_dataset_rd(ppf6c_kit):
     return HIDDataset(
         root=pytest.RESOURCES_DIR / "profiles" / "RD",
-        panel=pytest.PANEL_PATH,
+        panel_path=pytest.PANEL_PATH,
         annotations_path=pytest.RESOURCES_DIR / "profiles" / "RD",
         hid_to_annotations_path=(pytest.RESOURCES_DIR / "profiles" /
                                  "RD" / "2p_5p_hid_to_annotation.csv"),

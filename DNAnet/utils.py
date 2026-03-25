@@ -1,17 +1,23 @@
+from __future__ import annotations
+
 import dataclasses
 import json
 import math
 import re
+from collections import defaultdict
 from itertools import islice
 from pathlib import Path
-from typing import Dict, Iterable, Iterator, List, Optional, Sequence, Union, Tuple
+from typing import TYPE_CHECKING, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple, Union
 
 import coolname
 import numpy as np
+from torch.utils.data import Dataset
 
-from DNAnet.data.data_models import Allele, Marker
-from DNAnet.data.data_models.hid_image import HIDImage
+from DNAnet.data.data_models.dna_models import Marker, Allele
 from DNAnet.typing import PathLike
+
+if TYPE_CHECKING:
+    from DNAnet.data.data_models.hid_image import HIDImage
 
 
 def is_rd_hid_filename(file_name: str) -> bool:
@@ -33,6 +39,19 @@ def get_prefix_from_filename(file_name: PathLike) -> str:
         return file_name.split("_")[0]  # take '1A2'
     else:
         raise ValueError(f"Cannot take prefix from provided file name: {file_name}")
+
+def get_hids_per_prefix_per_noc(dataset: Dataset) -> Dict[str, Dict[str, List[HIDImage]]]:
+    """
+    Get per number of contributors and per prefix (i.e. `1A2`) the belonging HIDImages as
+    a dictionary. The number of contributors is the second number in the prefix, e.g. '2' in
+    `1A2`.
+    """
+    hids_per_prefix_per_nr_donors = defaultdict(lambda: defaultdict(list))
+    for im in dataset:
+        prefix = get_prefix_from_filename(im.path.stem)
+        noc = prefix[-1]
+        hids_per_prefix_per_nr_donors[noc][prefix].append(im)
+    return hids_per_prefix_per_nr_donors
 
 def generate_random_name() -> str:
     return ''.join([x.capitalize() for x in coolname.generate()])

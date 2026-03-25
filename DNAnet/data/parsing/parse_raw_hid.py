@@ -8,9 +8,8 @@ import construct
 import numpy as np
 
 from DNAnet.data.preprocessing.baseline_and_smooth import baseline_superior
-from DNAnet.data.strategies.kit_strategies.str_kit import STRKit
+from DNAnet.data.strategies.strategy_registry import StrategyRegistry
 from DNAnet.typing import PathLike
-
 
 ElementValue = Union[int, Sequence[int], str]
 
@@ -258,7 +257,7 @@ def parse_hid(filename: PathLike) -> Optional[Mapping[str, Optional[ElementValue
     return hid_data
 
 
-def get_peak_data(hid_file: PathLike, strategy: str, kit: STRKit) -> Optional[np.ndarray]:
+def get_peak_data(hid_file: PathLike) -> Optional[np.ndarray]:
     """
     Retrieve peak data from HID file. The data per dye
     can be stored in different columns (e.g. the first dye can be stored
@@ -266,16 +265,19 @@ def get_peak_data(hid_file: PathLike, strategy: str, kit: STRKit) -> Optional[np
     be stored in either DATA_205 or DATA_105.
 
     :param hid_file: path to hid file
-    :param strategy: strategy to use for parsing. One of
+    :param data_loading_strategy: data_loading_strategy to use for parsing. One of
         "raw", "analyzed", "superior"
     :param kit: the kit of the HID file to read in
     :returns: RFU for each dye [n-dyes (6), ...]. None if problems
     with reading
     """
 
-    if strategy not in ("raw", "analyzed", "superior"):
-        raise ValueError(f"data loading strategy should be one of 'raw', 'analyzed' or 'superior', "
-                         f"got {strategy}")
+    data_loading_strategy = StrategyRegistry.get_dataset().data_loading_strategy.value
+    kit = StrategyRegistry.get_scaling_strategy().kit
+
+    if data_loading_strategy not in ("raw", "analyzed", "superior"):
+        raise ValueError(f"data loading data_loading_strategy should be one of 'raw', 'analyzed' or 'superior', "
+                         f"got {data_loading_strategy}")
 
     try:
         data = parse_hid(hid_file)
@@ -285,24 +287,17 @@ def get_peak_data(hid_file: PathLike, strategy: str, kit: STRKit) -> Optional[np
         return None
 
     try:
-        #TODO fix kit strategy
-        if strategy == 'superior' or strategy == 'raw':
-            if kit.name == "POWERPLEX_Y23":
-                data_elements = ["DATA_1","DATA_2", "DATA_3","DATA_4", "DATA_105"]
-            elif kit.name == "PPF6C":
-                data_elements = ["DATA_1","DATA_2", "DATA_3","DATA_4","DATA_106", "DATA_105"]
-        elif strategy == "analyzed":
-            if kit.name == "POWERPLEX_Y23":
-                data_elements = ["DATA_9","DATA_10", "DATA_11","DATA_12", "DATA_205"]
-            elif kit.name == "PPF6C":
-                data_elements = ["DATA_9","DATA_10", "DATA_11","DATA_12", "DATA_205", "DATA_206"]
+        if data_loading_strategy == 'superior' or data_loading_strategy == 'raw':
+            data_elements = kit.raw_data_columns
+        elif data_loading_strategy == "analyzed":
+            data_elements = kit.analyzed_data_columns
         else:
-            raise ValueError(f'Unknown parsing strategy: {strategy}')
+            raise ValueError(f'Unknown parsing data_loading_strategy: {data_loading_strategy}')
 
         dyes = [data[data_element] for data_element in data_elements]
 
     except KeyError:
-        LOGGER.warning(f'could not find {strategy} DATA elements for {hid_file}, found '
+        LOGGER.warning(f'could not find {data_loading_strategy} DATA elements for {hid_file}, found '
                        f'{data_colnames}')
         return None
 
@@ -310,7 +305,7 @@ def get_peak_data(hid_file: PathLike, strategy: str, kit: STRKit) -> Optional[np
     dyes = np.array(dyes, dtype=np.int32)
 
 
-    if strategy == "superior":
+    if data_loading_strategy == "superior":
         # subtract the baseline using the Genemarker superior method
         # baseline is not subtracted for the size standard
         baseline = baseline_superior(dyes)
